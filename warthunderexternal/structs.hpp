@@ -117,6 +117,9 @@ namespace settings {
     extern bool bAutoTeam;
     extern int ManualTeam;
 
+    extern bool bEnableMemoryWrites;
+    extern bool bEnableEntityHijack;
+
     extern bool bForceArcadeCrosshair;
     extern bool bForceAirLead;
     extern bool bForceTankESP;

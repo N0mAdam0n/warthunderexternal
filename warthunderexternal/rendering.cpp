@@ -1,5 +1,6 @@
 #include "structs.hpp"
 #include "memory.hpp"
+#include "input.hpp"
 #include "imgui/imgui.h"
 #include <cmath>
 
@@ -41,12 +42,16 @@ bool IsAimingAtMe(const Vector3& enemyPos, const Vector3& localPos, const Matrix
 }
 
 void MoveMouse(float x, float y) {
-    float dx = x - (float)ScreenWidth / 2.0f; float dy = y - (float)ScreenHeight / 2.0f; float dist = std::sqrt(dx * dx + dy * dy);
+    float dx = x - (float)ScreenWidth / 2.0f;
+    float dy = y - (float)ScreenHeight / 2.0f;
+    float dist = std::sqrt(dx * dx + dy * dy);
     if (dist < 2.0f) return;
+
     float appliedSmooth = settings::aimSmooth;
-    INPUT i = { 0 }; i.type = INPUT_MOUSE; i.mi.dwFlags = MOUSEEVENTF_MOVE;
-    i.mi.dx = (LONG)(dx / appliedSmooth); i.mi.dy = (LONG)(dy / appliedSmooth);
-    SendInput(1, &i, sizeof(INPUT));
+    Input::MoveMouseRelative(
+        static_cast<int>(dx / appliedSmooth),
+        static_cast<int>(dy / appliedSmooth)
+    );
 }
 
 void RenderESP(ImDrawList* draw) {

@@ -15,11 +15,9 @@
 #include "structs.hpp"
 #include "offsets.hpp"
 #include "memory.hpp"
+#include "config.hpp"
+#include "input.hpp"
 #include "ui.hpp"
-
-#include "kdmapper/kdmapper.hpp"
-#include "kdmapper/intel_driver.hpp"
-#include "driver_bytes.h" 
 
 #include "imgui/imgui.h"
 #include "imgui/imgui_impl_win32.h"
@@ -52,7 +50,7 @@ namespace settings {
     bool bEulaAccepted = false;
     bool bStreamerMode = false;
 
-    bool bMemoryAim = true;
+    bool bMemoryAim = false;
     int aimKey = VK_RBUTTON;
     float aimFov = 150.0f;
     float aimSmooth = 4.0f;
@@ -85,6 +83,9 @@ namespace settings {
 
     bool bAutoTeam = true;
     int ManualTeam = 1;
+
+    bool bEnableMemoryWrites = false;
+    bool bEnableEntityHijack = false;
 
     bool bForceArcadeCrosshair = false;
     bool bForceAirLead = false;
@@ -138,7 +139,7 @@ void RenderNotifications(ImDrawList* draw) {
 
 void DrawWatermark(ImDrawList* draw) {
     time_t raw; struct tm info; char buf[80]; time(&raw); localtime_s(&info, &raw); strftime(buf, sizeof(buf), "%H:%M:%S", &info);
-    char text[128]; sprintf_s(text, "JANG (WT) | FPS: %d | %s", (int)ImGui::GetIO().Framerate, buf);
+    char text[128]; sprintf_s(text, "JANG DMA (WT) | FPS: %d | %s", (int)ImGui::GetIO().Framerate, buf);
     ImVec2 pos(20, 20); ImVec2 tSize = ImGui::CalcTextSize(text); ImVec2 pad(12, 6);
     ImVec2 bSize(tSize.x + pad.x * 2, tSize.y + pad.y * 2);
     draw->AddRectFilled(pos, ImVec2(pos.x + bSize.x, pos.y + bSize.y), ImColor(15, 15, 15, 200), 4.0f);
@@ -178,8 +179,11 @@ void SetupStyle() {
 }
 
 void InitOverlay() {
+    if (settings::overlayWidth > 0) ScreenWidth = settings::overlayWidth;
+    if (settings::overlayHeight > 0) ScreenHeight = settings::overlayHeight;
+
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(NULL), NULL, NULL, NULL, NULL, L"SaturnClass", NULL }; RegisterClassExW(&wc);
-    g_hwndOverlay = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW, L"SaturnClass", L"SaturnOverlay", WS_POPUP, 0, 0, ScreenWidth, ScreenHeight, NULL, NULL, wc.hInstance, NULL);
+    g_hwndOverlay = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW, L"SaturnClass", L"SaturnOverlay", WS_POPUP, settings::overlayX, settings::overlayY, ScreenWidth, ScreenHeight, NULL, NULL, wc.hInstance, NULL);
     MARGINS margins = { -1 }; DwmExtendFrameIntoClientArea(g_hwndOverlay, &margins); SetLayeredWindowAttributes(g_hwndOverlay, 0, 255, LWA_ALPHA);
     DXGI_SWAP_CHAIN_DESC sd = { 0 }; sd.BufferCount = 2; sd.BufferDesc.Width = ScreenWidth; sd.BufferDesc.Height = ScreenHeight; sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; sd.BufferDesc.RefreshRate.Numerator = 60; sd.BufferDesc.RefreshRate.Denominator = 1; sd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH; sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; sd.OutputWindow = g_hwndOverlay; sd.SampleDesc.Count = 1; sd.Windowed = TRUE; sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
     D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, NULL, 0, D3D11_SDK_VERSION, &sd, &g_pSwapChain, &g_pd3dDevice, NULL, &g_pd3dDeviceContext);
@@ -188,33 +192,29 @@ void InitOverlay() {
     for (int i = 0; i < 50; i++) g_Particles.push_back({ (float)(rand() % ScreenWidth), (float)(rand() % ScreenHeight), ((rand() % 100) - 50) / 200.0f, 0, (float)(rand() % 2 + 1), (float)(rand() % 100) / 100.0f });
 }
 
-bool MapDriverInternal() {
-    if (intel_driver::Load() < 0) return false; NTSTATUS exitCode = 0;
-    uint64_t entry_point = kdmapper::MapDriver(driver_bytes, 0, 0, false, true, kdmapper::AllocationMode::AllocatePool, false, nullptr, &exitCode);
-    intel_driver::Unload(); return (entry_point != 0 && exitCode >= 0);
-}
-
 int main() {
-    SetConsoleTitleA("JANG Loader [WT EDITION]");
-    std::cout << "[>] Initializing..." << std::endl;
+    SetConsoleTitleA("JANG DMA Loader [WT EDITION]");
+    std::cout << "[>] Initializing DMA edition..." << std::endl;
     std::ifstream f("license.dat"); if (f.good()) settings::bEulaAccepted = true;
 
-    std::cout << "[>] Mapping driver in progress..." << std::endl;
-    if (!MapDriverInternal()) {
-        std::cout << "[!] Driver failed to map (might already be loaded). Skipping..." << std::endl;
+    if (LoadDmaConfig()) {
+        std::cout << " [+] Loaded dma_config.ini" << std::endl;
     }
     else {
-        std::cout << " [+] Driver mapped successfully." << std::endl;
+        std::cout << "[!] dma_config.ini not found, using defaults." << std::endl;
     }
-    Sleep(1000);
 
+    std::cout << "[>] Connecting to DMA device..." << std::endl;
     if (!mem.Connect()) {
-        std::cout << "[!] Failed to connect to mapped driver." << std::endl;
+        std::cout << "[!] Failed to connect to DMA device." << std::endl;
         return 1;
     }
-    std::cout << " [+] Driver connected." << std::endl;
 
-    std::cout << "[>] Waiting for aces.exe... (Press END to cancel)" << std::endl;
+    if (settings::bUseKmbox) {
+        Input::Init();
+    }
+
+    std::cout << "[>] Waiting for aces.exe on target machine... (Press END to cancel)" << std::endl;
     while (mem.GetPID(L"aces.exe") == 0) {
         if (GetAsyncKeyState(VK_END) & 1) return 0;
         Sleep(1000);
@@ -226,9 +226,12 @@ int main() {
         if (GetAsyncKeyState(VK_END) & 1) return 0;
         Sleep(1000);
     }
-    std::cout << " [+] Attached successfully! Updating offsets..." << std::endl;
+    std::cout << " [+] Attached successfully! Fetching offsets from API..." << std::endl;
 
-    mem.UpdateOffsets(); InitOverlay(); std::thread(CacheThread).detach();
+    if (!mem.UpdateOffsets()) {
+        std::cout << "[!] Using built-in offset defaults." << std::endl;
+    }
+    InitOverlay(); std::thread(CacheThread).detach();
 
     float menuAlpha = 0.0f; int activeTab = 0;
     LONG exStyle = GetWindowLong(g_hwndOverlay, GWL_EXSTYLE);
@@ -243,7 +246,7 @@ int main() {
 
         mem.UpdateGameWindow();
         HWND fgWindow = GetForegroundWindow();
-        bool isGameActive = (fgWindow == mem.GameHwnd || fgWindow == g_hwndOverlay);
+        bool isGameActive = (fgWindow == g_hwndOverlay || fgWindow == mem.GameHwnd || mem.GameHwnd == NULL);
 
         static auto lastToggle = GetTickCount64();
         if (isGameActive && (GetAsyncKeyState(VK_INSERT) & 1) && (GetTickCount64() - lastToggle > 200)) {
@@ -251,9 +254,6 @@ int main() {
             lastToggle = GetTickCount64();
             if (bShowMenu) {
                 SetForegroundWindow(g_hwndOverlay);
-            }
-            else {
-                if (mem.GameHwnd) SetForegroundWindow(mem.GameHwnd);
             }
         }
 
@@ -294,7 +294,7 @@ int main() {
             UI::DrawGlow(draw, p, ImVec2(p.x + s.x, p.y + s.y), ImColor(219, 44, 44, (int)(255 * menuAlpha)), 12.0f, 20.0f);
             draw->AddRectFilled(p, ImVec2(p.x + s.x, p.y + s.y), ImColor(17, 17, 21, (int)(255 * menuAlpha)), 12.0f);
             draw->AddRectFilled(p, ImVec2(p.x + 180, p.y + s.y), ImColor(12, 12, 15, (int)(255 * menuAlpha)), 12.0f, ImDrawFlags_RoundCornersLeft);
-            ImGui::SetCursorPos(ImVec2(20, 30)); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, menuAlpha), "JANG"); ImGui::SetCursorPos(ImVec2(20, 60)); ImGui::TextDisabled("WAR THUNDER");
+            ImGui::SetCursorPos(ImVec2(20, 30)); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, menuAlpha), "JANG"); ImGui::SetCursorPos(ImVec2(20, 60)); ImGui::TextDisabled("WAR THUNDER DMA");
 
             if (settings::bEulaAccepted) {
                 ImGui::SetCursorPos(ImVec2(15, 100)); ImGui::BeginGroup();
@@ -315,7 +315,16 @@ int main() {
                 if (UI::Button("I UNDERSTAND & ACCEPT", ImVec2(200, 40))) { settings::bEulaAccepted = true; std::ofstream f("license.dat"); f << "ACCEPTED"; f.close(); PushNotification("Welcome to Dashboard."); }
             }
             else {
-                if (activeTab == 0) { ImGui::Text("DASHBOARD"); ImGui::Separator(); ImGui::Spacing(); ImGui::Text("Target: War Thunder"); ImGui::Text("Pointers: Valid"); }
+                if (activeTab == 0) {
+                    ImGui::Text("DASHBOARD"); ImGui::Separator(); ImGui::Spacing();
+                    ImGui::Text("Mode: DMA Secondary Machine");
+                    ImGui::Text("Device: %s", settings::dmaDevice.c_str());
+                    ImGui::Text("Target PID: %lu", mem.ProcessID);
+                    ImGui::Text("Base: 0x%llX", (unsigned long long)mem.BaseAddress);
+                    ImGui::Text("Overlay: %dx%d @ (%d,%d)", ScreenWidth, ScreenHeight, settings::overlayX, settings::overlayY);
+                    ImGui::Text("Kmbox: %s", Input::IsReady() ? "Connected" : (settings::bUseKmbox ? "Failed" : "Disabled"));
+                    if (!offsets::api_version.empty()) ImGui::Text("Offsets: v%s", offsets::api_version.c_str());
+                }
                 else if (activeTab == 1) {
                     ImGui::Columns(2, nullptr, false); ImGui::BeginChild("Aim", ImVec2(0, 0), true); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "AIM ASSIST"); ImGui::Separator();
                     UI::Toggle("Memory Aimbot", &settings::bMemoryAim);
@@ -347,13 +356,27 @@ int main() {
                 }
                 else if (activeTab == 3) {
                     ImGui::BeginChild("Exp", ImVec2(0, 0), true);
-                    ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "NATIVE ENGINE EXPLOITS"); ImGui::Separator();
+                    ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "MEMORY WRITE FEATURES"); ImGui::Separator();
+                    ImGui::TextWrapped("All options below write to game memory. Disabled by default.");
+                    ImGui::Spacing();
+                    if (UI::Toggle("Enable Memory Writes (Master)", &settings::bEnableMemoryWrites)) {
+                        if (!settings::bEnableMemoryWrites) {
+                            settings::bMindControlActive = false;
+                            shared::TargetHijackPtr = 0;
+                            PushNotification("Memory writes disabled.");
+                        }
+                    }
+
+                    if (!settings::bEnableMemoryWrites) ImGui::BeginDisabled();
+
+                    ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
+                    ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "HUD OVERRIDES"); ImGui::Separator();
                     UI::Toggle("Force Arcade Crosshair", &settings::bForceArcadeCrosshair);
                     UI::Toggle("Force Air Lead UI", &settings::bForceAirLead);
                     UI::Toggle("Force Tank ESP", &settings::bForceTankESP);
                     ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 
-                    ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "AB BENEFITS -> RB"); ImGui::Separator();
+                    ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "UNIT MODIFIERS"); ImGui::Separator();
                     UI::Toggle("Force NVD/Thermals", &settings::bForceThermals);
                     UI::Toggle("Force Mid-Air Reload (Planes)", &settings::bMidAirReload);
                     UI::Toggle("Ghost Tracks (No Collision/Debris Slow)", &settings::bGhostCollision);
@@ -362,6 +385,10 @@ int main() {
                     ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 
                     ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "ENTITY HIJACKING"); ImGui::Separator();
+                    if (UI::Toggle("Enable Entity Hijack", &settings::bEnableEntityHijack)) {
+                        if (!settings::bEnableEntityHijack) settings::bMindControlActive = false;
+                    }
+                    if (!settings::bEnableEntityHijack) ImGui::BeginDisabled();
 
                     shared::DataMutex.lock();
                     std::vector<CachedEntity> uiEntities = shared::Entities;
@@ -369,7 +396,7 @@ int main() {
 
                     static int selectedEnt = -1;
                     std::string preview = "Select Target...";
-                    if (selectedEnt >= 0 && selectedEnt < uiEntities.size()) {
+                    if (selectedEnt >= 0 && selectedEnt < (int)uiEntities.size()) {
                         char buf[128];
                         snprintf(buf, sizeof(buf), "[%s] %s", uiEntities[selectedEnt].team == shared::LocalTeam ? "TEAM" : "ENEMY", uiEntities[selectedEnt].name.c_str());
                         preview = buf;
@@ -379,7 +406,7 @@ int main() {
                     }
 
                     if (ImGui::BeginCombo("##HijackCombo", preview.c_str())) {
-                        for (int i = 0; i < uiEntities.size(); i++) {
+                        for (int i = 0; i < (int)uiEntities.size(); i++) {
                             char buf[128];
                             snprintf(buf, sizeof(buf), "[%s] %s", uiEntities[i].team == shared::LocalTeam ? "TEAM" : "ENEMY", uiEntities[i].name.c_str());
                             bool is_selected = (selectedEnt == i);
@@ -394,7 +421,7 @@ int main() {
 
                     ImGui::Spacing();
                     if (UI::Button("HIJACK SELECTED", ImVec2(180, 30))) {
-                        if (shared::TargetHijackPtr != 0) {
+                        if (settings::bEnableMemoryWrites && settings::bEnableEntityHijack && shared::TargetHijackPtr != 0) {
                             settings::bMindControlActive = true;
                             PushNotification("Hijacking Entity...");
                         }
@@ -411,13 +438,19 @@ int main() {
                         ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Currently Hijacking Entity!");
                     }
 
+                    if (!settings::bEnableEntityHijack) ImGui::EndDisabled();
+                    if (!settings::bEnableMemoryWrites) ImGui::EndDisabled();
+
                     ImGui::EndChild();
                 }
                 else if (activeTab == 4) {
                     ImGui::BeginChild("Cfg", ImVec2(0, 0), true); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "SYSTEM & CONFIG"); ImGui::Separator();
+                    ImGui::TextDisabled("Edit dma_config.ini and restart to apply DMA/Kmbox settings.");
+                    ImGui::Text("Capture Window: %s", settings::captureWindowTitle.empty() ? "(fullscreen)" : settings::captureWindowTitle.c_str());
+                    ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
                     UI::Toggle("Auto Team Detect", &settings::bAutoTeam); if (!settings::bAutoTeam) { ImGui::Indent(15.0f); ImGui::SliderInt("Manual ID", &settings::ManualTeam, 0, 4); ImGui::Unindent(15.0f); }
                     ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-                    if (UI::Button("Streamer Mode", ImVec2(-1, 40))) { settings::bStreamerMode = !settings::bStreamerMode; PushNotification("Streamer Mode Toggled"); } ImGui::Spacing(); if (UI::Button("UNLOAD", ImVec2(-1, 40))) exit(0); ImGui::EndChild();
+                    if (UI::Button("Streamer Mode", ImVec2(-1, 40))) { settings::bStreamerMode = !settings::bStreamerMode; PushNotification("Streamer Mode Toggled"); } ImGui::Spacing(); if (UI::Button("UNLOAD", ImVec2(-1, 40))) { Input::Shutdown(); mem.Disconnect(); exit(0); } ImGui::EndChild();
                 }
             }
             ImGui::EndChild(); ImGui::End();

@@ -23,6 +23,8 @@ namespace shared {
 }
 
 namespace settings {
+    extern bool bEnableMemoryWrites;
+    extern bool bEnableEntityHijack;
     extern bool bForceArcadeCrosshair;
     extern bool bForceAirLead;
     extern bool bForceTankESP;
@@ -44,6 +46,7 @@ struct WTVertex {
 void CacheThread() {
     static uintptr_t cachedRealLocalUnit = 0;
     static float cachedBulletVelocity = 800.0f;
+    static bool restoreControlPending = false;
 
     while (true) {
         if (!mem.BaseAddress) { std::this_thread::sleep_for(std::chrono::milliseconds(500)); continue; }
@@ -59,16 +62,18 @@ void CacheThread() {
             camPos = mem.Read<Vector3>(camPtr + offsets::camera::matrix + 0x30);
         }
 
-        uintptr_t hudPtr = mem.Read<uintptr_t>(mem.BaseAddress + offsets::hud_offset);
-        if (mem.IsValidPtr(hudPtr)) {
-            if (settings::bForceArcadeCrosshair) mem.Write<uint8_t>(hudPtr + offsets::hud::arcade_crosshair, 2);
-            if (settings::bForceAirLead) {
-                mem.Write<uint8_t>(hudPtr + offsets::hud::can_select_unit, 1);
-                mem.Write<uint8_t>(hudPtr + offsets::hud::aircraft_distance, 2);
-                mem.Write<uint8_t>(hudPtr + offsets::hud::ground_to_air_prediction, 2);
-                mem.Write<uint8_t>(hudPtr + offsets::hud::air_to_air_prediction, 2);
+        if (settings::bEnableMemoryWrites) {
+            uintptr_t hudPtr = mem.Read<uintptr_t>(mem.BaseAddress + offsets::hud_offset);
+            if (mem.IsValidPtr(hudPtr)) {
+                if (settings::bForceArcadeCrosshair) mem.Write<uint8_t>(hudPtr + offsets::hud::arcade_crosshair, 2);
+                if (settings::bForceAirLead) {
+                    mem.Write<uint8_t>(hudPtr + offsets::hud::can_select_unit, 1);
+                    mem.Write<uint8_t>(hudPtr + offsets::hud::aircraft_distance, 2);
+                    mem.Write<uint8_t>(hudPtr + offsets::hud::ground_to_air_prediction, 2);
+                    mem.Write<uint8_t>(hudPtr + offsets::hud::air_to_air_prediction, 2);
+                }
+                if (settings::bForceTankESP) mem.Write<uint8_t>(hudPtr + offsets::hud::tank_esp, 2);
             }
-            if (settings::bForceTankESP) mem.Write<uint8_t>(hudPtr + offsets::hud::tank_esp, 2);
         }
 
         Vector3 ccip = { 0,0,0 };
@@ -331,18 +336,31 @@ void CacheThread() {
             }
         }
 
-        if (mem.IsValidPtr(localMgr) && cachedRealLocalUnit != 0) {
+        if (!settings::bEnableEntityHijack) {
+            settings::bMindControlActive = false;
+        }
+
+        if (settings::bEnableMemoryWrites && mem.IsValidPtr(localMgr) && cachedRealLocalUnit != 0) {
             if (settings::bForceThermals) mem.Write<int>(cachedRealLocalUnit + 0x768, 1);
             if (settings::bMidAirReload) mem.Write<bool>(cachedRealLocalUnit + 0x35F0, true);
             if (settings::bGhostCollision) mem.Write<bool>(cachedRealLocalUnit + 0x3E30, true);
             if (settings::bSpamScout) mem.Write<float>(cachedRealLocalUnit + 0x1030, 0.0f);
             if (settings::bThrustMult) mem.Write<float>(cachedRealLocalUnit + 0x3D68, 1.15f);
 
-            if (settings::bMindControlActive && shared::TargetHijackPtr.load() != 0) {
+            if (settings::bEnableEntityHijack && settings::bMindControlActive && shared::TargetHijackPtr.load() != 0) {
                 mem.Write<uintptr_t>(localMgr + offsets::localplayer::localunit_offset, shared::TargetHijackPtr.load());
+                restoreControlPending = true;
             }
-            else {
+            else if (restoreControlPending) {
                 mem.Write<uintptr_t>(localMgr + offsets::localplayer::localunit_offset, cachedRealLocalUnit);
+                restoreControlPending = false;
+            }
+        }
+        else if (!settings::bEnableMemoryWrites) {
+            settings::bMindControlActive = false;
+            if (restoreControlPending && mem.IsValidPtr(localMgr) && cachedRealLocalUnit != 0) {
+                mem.Write<uintptr_t>(localMgr + offsets::localplayer::localunit_offset, cachedRealLocalUnit);
+                restoreControlPending = false;
             }
         }
 

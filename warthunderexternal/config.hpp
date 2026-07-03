@@ -2,13 +2,11 @@
 #include <string>
 
 namespace settings {
-    extern std::string dmaFolder;
     extern std::string dmaDevice;
-    extern bool dmaDisableRefresh;
-    extern std::string targetProcess;
-    extern int overlayAlignMode;
     extern std::string captureWindowTitle;
+    extern std::string overlayAlignMode;
     extern bool overlayUseClientRect;
+    extern bool overlayAutoCapture;
     extern int overlayX;
     extern int overlayY;
     extern int overlayWidth;

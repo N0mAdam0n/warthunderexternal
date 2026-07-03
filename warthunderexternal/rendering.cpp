@@ -29,6 +29,17 @@ Vector3 TransformVec4x4(const Vector3& v, const Matrix4x4& mat) {
     };
 }
 
+static Vector3 PredictEntityPos(const CachedEntity& ent) {
+    const uint64_t cacheTick = shared::entityCacheTick.load(std::memory_order_relaxed);
+    if (cacheTick == 0) return ent.position;
+
+    float ageSec = (GetTickCount64() - cacheTick) / 1000.0f;
+    if (ageSec < 0.0f) ageSec = 0.0f;
+    if (ageSec > 0.12f) ageSec = 0.12f;
+
+    return ent.position + ent.velocity * ageSec;
+}
+
 bool IsAimingAtMe(const Vector3& enemyPos, const Vector3& localPos, const Matrix3x3& enemyRot) {
     Vector3 fwd = { enemyRot.m[0], enemyRot.m[1], enemyRot.m[2] };
     float fLen = std::sqrt(fwd.x * fwd.x + fwd.y * fwd.y + fwd.z * fwd.z);
@@ -111,10 +122,13 @@ void RenderESP(ImDrawList* draw) {
         if (settings::bAutoTeam) { if (ent.team == lTeam) continue; }
         else { if (ent.team == settings::ManualTeam) continue; }
 
-        ImVec2 screenPos;
-        if (!WorldToScreen(ent.position, screenPos, vm)) continue;
+        CachedEntity drawEnt = ent;
+        drawEnt.position = PredictEntityPos(ent);
 
-        float dist = ent.position.x * vm.m[3] + ent.position.y * vm.m[7] + ent.position.z * vm.m[11] + vm.m[15];
+        ImVec2 screenPos;
+        if (!WorldToScreen(drawEnt.position, screenPos, vm)) continue;
+
+        float dist = drawEnt.position.x * vm.m[3] + drawEnt.position.y * vm.m[7] + drawEnt.position.z * vm.m[11] + vm.m[15];
         if (dist < 0.0f) dist = 0.0f;
 
         ImU32 boxColor = ImGui::ColorConvertFloat4ToU32(*(ImVec4*)settings::col_BoxVis);
@@ -122,15 +136,15 @@ void RenderESP(ImDrawList* draw) {
         Vector3 c[8] = { {ent.bbMin.x, ent.bbMin.y, ent.bbMin.z}, {ent.bbMax.x, ent.bbMin.y, ent.bbMin.z}, {ent.bbMax.x, ent.bbMax.y, ent.bbMin.z}, {ent.bbMin.x, ent.bbMax.y, ent.bbMin.z}, {ent.bbMin.x, ent.bbMin.y, ent.bbMax.z}, {ent.bbMax.x, ent.bbMin.y, ent.bbMax.z}, {ent.bbMax.x, ent.bbMax.y, ent.bbMax.z}, {ent.bbMin.x, ent.bbMax.y, ent.bbMax.z} };
         ImVec2 s[8]; bool validBox = true; float mix = 10000, max = -10000, miy = 10000, may = -10000;
         for (int k = 0; k < 8; k++) {
-            if (!WorldToScreen(TransformVec(c[k], ent.rotation, ent.position), s[k], vm)) { validBox = false; break; }
+            if (!WorldToScreen(TransformVec(c[k], drawEnt.rotation, drawEnt.position), s[k], vm)) { validBox = false; break; }
             if (s[k].x < mix) mix = s[k].x; if (s[k].x > max) max = s[k].x;
             if (s[k].y < miy) miy = s[k].y; if (s[k].y > may) may = s[k].y;
         }
 
-        if (settings::bDangerWarning && IsAimingAtMe(ent.position, lPos, ent.rotation)) {
+        if (settings::bDangerWarning && IsAimingAtMe(drawEnt.position, lPos, drawEnt.rotation)) {
             boxColor = ImColor(255, 0, 0);
             ImVec2 cent((float)ScreenWidth / 2.0f, (float)ScreenHeight); ImVec2 es;
-            if (WorldToScreen(ent.position, es, vm)) draw->AddLine(cent, es, ImColor(255, 0, 0, 150), 2.0f);
+            if (WorldToScreen(drawEnt.position, es, vm)) draw->AddLine(cent, es, ImColor(255, 0, 0, 150), 2.0f);
         }
 
         if (settings::bEsp && validBox) {
@@ -168,7 +182,7 @@ void RenderESP(ImDrawList* draw) {
                         ImVec2 pS[8]; bool validPartBox = true;
                         for (int k = 0; k < 8; k++) {
                             Vector3 tankLocal = TransformPart(pC[k], part.transform, part.position);
-                            Vector3 worldPos = TransformVec(tankLocal, ent.rotation, ent.position);
+                            Vector3 worldPos = TransformVec(tankLocal, drawEnt.rotation, drawEnt.position);
                             if (!WorldToScreen(worldPos, pS[k], vm)) { validPartBox = false; break; }
                         }
 
@@ -212,9 +226,9 @@ void RenderESP(ImDrawList* draw) {
                                 Vector3 l2 = TransformPart(v2, part.transform, part.position);
                                 Vector3 l3 = TransformPart(v3, part.transform, part.position);
 
-                                Vector3 w1 = TransformVec(l1, ent.rotation, ent.position);
-                                Vector3 w2 = TransformVec(l2, ent.rotation, ent.position);
-                                Vector3 w3 = TransformVec(l3, ent.rotation, ent.position);
+                                Vector3 w1 = TransformVec(l1, drawEnt.rotation, drawEnt.position);
+                                Vector3 w2 = TransformVec(l2, drawEnt.rotation, drawEnt.position);
+                                Vector3 w3 = TransformVec(l3, drawEnt.rotation, drawEnt.position);
 
                                 ImVec2 s1, s2, s3;
                                 if (WorldToScreen(w1, s1, vm) && WorldToScreen(w2, s2, vm) && WorldToScreen(w3, s3, vm)) {
@@ -226,7 +240,7 @@ void RenderESP(ImDrawList* draw) {
 
                     Vector3 centerPart = { (part.bbMin.x + part.bbMax.x) / 2.0f, (part.bbMin.y + part.bbMax.y) / 2.0f, (part.bbMin.z + part.bbMax.z) / 2.0f };
                     Vector3 centerTank = TransformPart(centerPart, part.transform, part.position);
-                    Vector3 centerWorld = TransformVec(centerTank, ent.rotation, ent.position);
+                    Vector3 centerWorld = TransformVec(centerTank, drawEnt.rotation, drawEnt.position);
 
                     ImVec2 partScreen;
                     if (WorldToScreen(centerWorld, partScreen, vm)) {
@@ -243,7 +257,7 @@ void RenderESP(ImDrawList* draw) {
                 float len = std::sqrt(forwardVec.x * forwardVec.x + forwardVec.y * forwardVec.y + forwardVec.z * forwardVec.z);
                 if (len > 0.01f) {
                     forwardVec.x /= len; forwardVec.y /= len; forwardVec.z /= len;
-                    Vector3 endPos = { ent.position.x + forwardVec.x * 12.0f, ent.position.y + forwardVec.y * 12.0f, ent.position.z + forwardVec.z * 12.0f };
+                    Vector3 endPos = { drawEnt.position.x + forwardVec.x * 12.0f, drawEnt.position.y + forwardVec.y * 12.0f, drawEnt.position.z + forwardVec.z * 12.0f };
                     ImVec2 screenEnd;
                     if (WorldToScreen(endPos, screenEnd, vm)) {
                         draw->AddLine(screenPos, screenEnd, ImColor(255, 255, 0, 200), 2.5f);
@@ -286,7 +300,7 @@ void RenderESP(ImDrawList* draw) {
         // prediction math
         float h = ent.bbMax.y - ent.bbMin.y;
         Vector3 targetWeak = { (ent.bbMin.x + ent.bbMax.x) / 2.0f, ent.bbMin.y + (h * settings::targetHeightRatio), (ent.bbMin.z + ent.bbMax.z) / 2.0f };
-        Vector3 tReal = TransformVec(targetWeak, ent.rotation, ent.position);
+        Vector3 tReal = TransformVec(targetWeak, drawEnt.rotation, drawEnt.position);
 
         float fTime = bVel > 10.0f ? dist / bVel : 0.0f;
 

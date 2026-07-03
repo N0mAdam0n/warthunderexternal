@@ -110,11 +110,6 @@
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
     </Link>
-    <PostBuildEvent>
-      <Command>if not exist "$(OutDir)dma" mkdir "$(OutDir)dma"
-xcopy /Y /Q "$(ProjectDir)dma\*.dll" "$(OutDir)dma\"
-copy /Y "$(ProjectDir)dma_config.ini" "$(OutDir)"</Command>
-    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -130,16 +125,10 @@ copy /Y "$(ProjectDir)dma_config.ini" "$(OutDir)"</Command>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
     </Link>
-    <PostBuildEvent>
-      <Command>if not exist "$(OutDir)dma" mkdir "$(OutDir)dma"
-xcopy /Y /Q "$(ProjectDir)dma\*.dll" "$(OutDir)dma\"
-copy /Y "$(ProjectDir)dma_config.ini" "$(OutDir)"</Command>
-    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="cachethread.cpp" />
     <ClCompile Include="config.cpp" />
-    <ClCompile Include="dma\dma_loader.cpp" />
     <ClCompile Include="imgui\imgui.cpp" />
     <ClCompile Include="imgui\imgui_draw.cpp" />
     <ClCompile Include="imgui\imgui_impl_dx11.cpp" />
@@ -154,7 +143,7 @@ copy /Y "$(ProjectDir)dma_config.ini" "$(OutDir)"</Command>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="config.hpp" />
-    <ClInclude Include="dma\dma_loader.hpp" />
+    <ClInclude Include="dma\vmmdll_api.hpp" />
     <ClInclude Include="imgui\imconfig.h" />
     <ClInclude Include="imgui\imgui.h" />
     <ClInclude Include="imgui\imgui_impl_dx11.h" />

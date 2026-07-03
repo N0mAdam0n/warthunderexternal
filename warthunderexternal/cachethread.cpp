@@ -6,6 +6,7 @@
 #include <cmath>     
 #include <mutex>
 #include <atomic>
+#include <chrono>
 
 extern Memory mem;
 
@@ -43,24 +44,74 @@ struct WTVertex {
     uint32_t pad;
 };
 
+void FastViewThread() {
+    float bulletVelocity = 800.0f;
+
+    while (true) {
+        if (!mem.BaseAddress) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            continue;
+        }
+
+        uintptr_t cGame = mem.Read<uintptr_t>(mem.BaseAddress + offsets::cgame_offset);
+        if (!mem.IsValidPtr(cGame)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
+        uintptr_t camPtr = mem.Read<uintptr_t>(cGame + offsets::cgame::camera);
+        Matrix4x4 viewM = mem.IsValidPtr(camPtr)
+            ? mem.Read<Matrix4x4>(camPtr + offsets::camera::matrix)
+            : mem.Read<Matrix4x4>(mem.BaseAddress + offsets::view_matrix_offset);
+
+        Vector3 localPos = { 0, 0, 0 };
+        if (mem.IsValidPtr(camPtr)) {
+            localPos = mem.Read<Vector3>(camPtr + offsets::camera::matrix + 0x30);
+        }
+
+        Vector3 ccip = { 0, 0, 0 };
+        uintptr_t ballisticsPtr = mem.Read<uintptr_t>(cGame + offsets::cgame::ballistics);
+        if (mem.IsValidPtr(ballisticsPtr)) {
+            float velocity = mem.Read<float>(ballisticsPtr + offsets::ballistic::velocity);
+            if (velocity > 10.0f && velocity < 5000.0f) bulletVelocity = velocity;
+            ccip = mem.Read<Vector3>(ballisticsPtr + offsets::ballistic::bomb_impact_point);
+        }
+
+        uintptr_t localMgr = mem.Read<uintptr_t>(mem.BaseAddress + offsets::localplayer_offset);
+        if (mem.IsValidPtr(localMgr)) {
+            uintptr_t localUnit = mem.Read<uintptr_t>(localMgr + offsets::localplayer::localunit_offset);
+            if (mem.IsValidPtr(localUnit)) {
+                Vector3 unitPos = mem.Read<Vector3>(localUnit + offsets::unit::position_offset);
+                if (!std::isnan(unitPos.x) && !std::isinf(unitPos.x) && !std::isnan(unitPos.z) && !std::isinf(unitPos.z)) {
+                    localPos = unitPos;
+                }
+            }
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(shared::DataMutex);
+            shared::ViewMatrix = viewM;
+            shared::LocalPos = localPos;
+            shared::LiveVelocity = bulletVelocity;
+            shared::CCIPPos = ccip;
+        }
+        shared::viewGeneration.fetch_add(1, std::memory_order_relaxed);
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(4));
+    }
+}
+
 void CacheThread() {
     static uintptr_t cachedRealLocalUnit = 0;
-    static float cachedBulletVelocity = 800.0f;
     static bool restoreControlPending = false;
 
     while (true) {
+        const auto iterationStart = std::chrono::steady_clock::now();
+
         if (!mem.BaseAddress) { std::this_thread::sleep_for(std::chrono::milliseconds(500)); continue; }
 
         uintptr_t cGame = mem.Read<uintptr_t>(mem.BaseAddress + offsets::cgame_offset);
         if (!mem.IsValidPtr(cGame)) { std::this_thread::sleep_for(std::chrono::milliseconds(100)); continue; }
-
-        uintptr_t camPtr = mem.Read<uintptr_t>(cGame + offsets::cgame::camera);
-        Matrix4x4 viewM = mem.IsValidPtr(camPtr) ? mem.Read<Matrix4x4>(camPtr + offsets::camera::matrix) : mem.Read<Matrix4x4>(mem.BaseAddress + offsets::view_matrix_offset);
-
-        Vector3 camPos = { 0, 0, 0 };
-        if (mem.IsValidPtr(camPtr)) {
-            camPos = mem.Read<Vector3>(camPtr + offsets::camera::matrix + 0x30);
-        }
 
         if (settings::bEnableMemoryWrites) {
             uintptr_t hudPtr = mem.Read<uintptr_t>(mem.BaseAddress + offsets::hud_offset);
@@ -76,15 +127,6 @@ void CacheThread() {
             }
         }
 
-        Vector3 ccip = { 0,0,0 };
-        uintptr_t ballisticsPtr = mem.Read<uintptr_t>(cGame + offsets::cgame::ballistics);
-        if (mem.IsValidPtr(ballisticsPtr)) {
-            float v = mem.Read<float>(ballisticsPtr + offsets::ballistic::velocity);
-            if (v > 10.0f && v < 5000.0f) cachedBulletVelocity = v;
-
-            ccip = mem.Read<Vector3>(ballisticsPtr + offsets::ballistic::bomb_impact_point);
-        }
-
         uintptr_t localMgr = mem.Read<uintptr_t>(mem.BaseAddress + offsets::localplayer_offset);
         if (mem.IsValidPtr(localMgr)) {
             if (!settings::bMindControlActive || cachedRealLocalUnit == 0) {
@@ -98,7 +140,7 @@ void CacheThread() {
             cachedRealLocalUnit = 0;
         }
 
-        Vector3 trueLocalPos = camPos;
+        Vector3 trueLocalPos = { 0, 0, 0 };
         Vector3 trueLocalVel = { 0,0,0 };
         if (mem.IsValidPtr(cachedRealLocalUnit)) {
             Vector3 unitPos = mem.Read<Vector3>(cachedRealLocalUnit + offsets::unit::position_offset);
@@ -366,15 +408,19 @@ void CacheThread() {
 
         {
             std::lock_guard<std::mutex> lock(shared::DataMutex);
-            shared::ViewMatrix = viewM;
-            shared::LocalPos = trueLocalPos;
             shared::LocalTeam = lTeam;
-            shared::LiveVelocity = cachedBulletVelocity;
-            shared::CCIPPos = ccip;
-            shared::Entities = tempCache;
-            shared::Rockets = tempRockets; // swap rockets cache
+            shared::Entities = std::move(tempCache);
+            shared::Rockets = std::move(tempRockets);
+            shared::entityCacheTick.store(GetTickCount64(), std::memory_order_relaxed);
         }
+        shared::entityGeneration.fetch_add(1, std::memory_order_relaxed);
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(12));
+        const auto iterationEnd = std::chrono::steady_clock::now();
+        perf::cacheMs.store(
+            static_cast<uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(iterationEnd - iterationStart).count()),
+            std::memory_order_relaxed
+        );
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }

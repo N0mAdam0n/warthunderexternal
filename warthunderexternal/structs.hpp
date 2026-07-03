@@ -77,6 +77,17 @@ namespace shared {
     extern int LocalTeam;
     extern std::mutex DataMutex;
     extern std::atomic<uintptr_t> TargetHijackPtr;
+    extern std::atomic<uint64_t> viewGeneration;
+    extern std::atomic<uint64_t> entityGeneration;
+    extern std::atomic<uint64_t> entityCacheTick;
+}
+
+namespace perf {
+    extern std::atomic<uint32_t> viewFps;
+    extern std::atomic<uint32_t> entityFps;
+    extern std::atomic<uint32_t> drawFps;
+    extern std::atomic<uint32_t> loopFps;
+    extern std::atomic<uint32_t> cacheMs;
 }
 
 namespace settings {

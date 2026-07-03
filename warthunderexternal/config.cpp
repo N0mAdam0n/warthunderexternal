@@ -4,13 +4,11 @@
 #include <cctype>
 
 namespace settings {
-    std::string dmaFolder = "dma";
     std::string dmaDevice = "fpga";
-    bool dmaDisableRefresh = true;
-    std::string targetProcess = "aces.exe";
-    int overlayAlignMode = 2;
     std::string captureWindowTitle;
+    std::string overlayAlignMode = "capture";
     bool overlayUseClientRect = true;
+    bool overlayAutoCapture = true;
     int overlayX = 0;
     int overlayY = 0;
     int overlayWidth = 0;
@@ -33,27 +31,16 @@ static std::string Trim(const std::string& value) {
 static void ApplyConfigValue(const std::string& section, const std::string& key, const std::string& rawValue) {
     std::string value = Trim(rawValue);
 
-    if (section == "dma") {
-        if (key == "folder" && !value.empty()) settings::dmaFolder = value;
-        else if (key == "device" && !value.empty()) settings::dmaDevice = value;
-        else if (key == "disable_refresh") settings::dmaDisableRefresh = (value == "1" || value == "true" || value == "yes");
-        else if (key == "target_process" && !value.empty()) settings::targetProcess = value;
-        return;
-    }
-
     if (section == "device" && key == "device") {
         if (!value.empty()) settings::dmaDevice = value;
         return;
     }
 
     if (section == "overlay") {
-        if (key == "align") {
-            if (value == "manual") settings::overlayAlignMode = 0;
-            else if (value == "capture") settings::overlayAlignMode = 1;
-            else if (value == "foreground") settings::overlayAlignMode = 2;
-        }
+        if (key == "capture_window") settings::captureWindowTitle = value;
+        else if (key == "align" && !value.empty()) settings::overlayAlignMode = value;
         else if (key == "use_client_rect") settings::overlayUseClientRect = (value == "1" || value == "true" || value == "yes");
-        else if (key == "capture_window") settings::captureWindowTitle = value;
+        else if (key == "auto_capture") settings::overlayAutoCapture = (value == "1" || value == "true" || value == "yes");
         else if (key == "overlay_x" && !value.empty()) settings::overlayX = std::stoi(value);
         else if (key == "overlay_y" && !value.empty()) settings::overlayY = std::stoi(value);
         else if (key == "overlay_width" && !value.empty()) settings::overlayWidth = std::stoi(value);

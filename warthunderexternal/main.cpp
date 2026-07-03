@@ -1,6 +1,5 @@
 #define NOMINMAX
 #include <Windows.h>
-#include <shellscalingapi.h>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -27,7 +26,6 @@
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dwmapi.lib")
-#pragma comment(lib, "shcore.lib")
 
 Memory mem;
 int ScreenWidth = GetSystemMetrics(SM_CXSCREEN);
@@ -46,6 +44,50 @@ namespace shared {
     int LocalTeam;
     std::mutex DataMutex;
     std::atomic<uintptr_t> TargetHijackPtr(0);
+    std::atomic<uint64_t> viewGeneration(0);
+    std::atomic<uint64_t> entityGeneration(0);
+    std::atomic<uint64_t> entityCacheTick(0);
+}
+
+namespace perf {
+    std::atomic<uint32_t> viewFps(0);
+    std::atomic<uint32_t> entityFps(0);
+    std::atomic<uint32_t> drawFps(0);
+    std::atomic<uint32_t> loopFps(0);
+    std::atomic<uint32_t> cacheMs(0);
+}
+
+static void UpdatePerfCounters(uint64_t lastViewGen, uint64_t lastEntityGen, uint64_t& effectiveDrawFrames, uint64_t& loopFrames) {
+    static uint64_t lastPerfTick = GetTickCount64();
+    static uint64_t lastViewCount = 0;
+    static uint64_t lastEntityCount = 0;
+    static uint64_t lastLoopCount = 0;
+    static uint64_t lastDrawCount = 0;
+
+    loopFrames++;
+
+    const uint64_t viewGen = shared::viewGeneration.load(std::memory_order_relaxed);
+    const uint64_t entityGen = shared::entityGeneration.load(std::memory_order_relaxed);
+    if (viewGen != lastViewGen || entityGen != lastEntityGen) {
+        effectiveDrawFrames++;
+    }
+
+    const uint64_t now = GetTickCount64();
+    if (now - lastPerfTick < 1000) return;
+
+    const uint64_t viewNow = viewGen;
+    const uint64_t entityNow = entityGen;
+
+    perf::viewFps.store(static_cast<uint32_t>(viewNow - lastViewCount), std::memory_order_relaxed);
+    perf::entityFps.store(static_cast<uint32_t>(entityNow - lastEntityCount), std::memory_order_relaxed);
+    perf::drawFps.store(static_cast<uint32_t>(effectiveDrawFrames - lastDrawCount), std::memory_order_relaxed);
+    perf::loopFps.store(static_cast<uint32_t>(loopFrames - lastLoopCount), std::memory_order_relaxed);
+
+    lastViewCount = viewNow;
+    lastEntityCount = entityNow;
+    lastDrawCount = effectiveDrawFrames;
+    lastLoopCount = loopFrames;
+    lastPerfTick = now;
 }
 
 namespace settings {
@@ -106,6 +148,7 @@ namespace settings {
 }
 
 extern void CacheThread();
+extern void FastViewThread();
 extern void RenderESP(ImDrawList* draw);
 
 struct Particle { float x, y, dx, dy, size, alpha; };
@@ -141,7 +184,9 @@ void RenderNotifications(ImDrawList* draw) {
 
 void DrawWatermark(ImDrawList* draw) {
     time_t raw; struct tm info; char buf[80]; time(&raw); localtime_s(&info, &raw); strftime(buf, sizeof(buf), "%H:%M:%S", &info);
-    char text[128]; sprintf_s(text, "JANG DMA (WT) | FPS: %d | %s", (int)ImGui::GetIO().Framerate, buf);
+    char text[192];
+    sprintf_s(text, "JANG DMA (WT) | Draw: %u | View: %u | Data: %u | Cache: %ums | %s",
+        perf::drawFps.load(), perf::viewFps.load(), perf::entityFps.load(), perf::cacheMs.load(), buf);
     ImVec2 pos(20, 20); ImVec2 tSize = ImGui::CalcTextSize(text); ImVec2 pad(12, 6);
     ImVec2 bSize(tSize.x + pad.x * 2, tSize.y + pad.y * 2);
     draw->AddRectFilled(pos, ImVec2(pos.x + bSize.x, pos.y + bSize.y), ImColor(15, 15, 15, 200), 4.0f);
@@ -171,6 +216,23 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     return DefWindowProc(hWnd, msg, wParam, lParam);
 }
 
+void ResizeOverlayRenderTargets(int width, int height) {
+    if (!g_pSwapChain || width <= 0 || height <= 0) return;
+
+    if (g_mainRenderTargetView) {
+        g_mainRenderTargetView->Release();
+        g_mainRenderTargetView = nullptr;
+    }
+
+    g_pSwapChain->ResizeBuffers(0, static_cast<UINT>(width), static_cast<UINT>(height), DXGI_FORMAT_UNKNOWN, 0);
+    ID3D11Texture2D* pBackBuffer = nullptr;
+    HRESULT hr = g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
+    if (SUCCEEDED(hr) && pBackBuffer) {
+        g_pd3dDevice->CreateRenderTargetView(pBackBuffer, nullptr, &g_mainRenderTargetView);
+        pBackBuffer->Release();
+    }
+}
+
 void SetupStyle() {
     ImGuiStyle& style = ImGui::GetStyle();
     style.WindowRounding = 6.0f; style.ChildRounding = 6.0f; style.FrameRounding = 4.0f; style.GrabRounding = 4.0f; style.PopupRounding = 4.0f;
@@ -180,33 +242,18 @@ void SetupStyle() {
     else io.Fonts->AddFontDefault();
 }
 
-void ResizeOverlayRenderTargets(int width, int height) {
-    if (!g_pSwapChain || width <= 0 || height <= 0) return;
-    if (g_mainRenderTargetView) {
-        g_mainRenderTargetView->Release();
-        g_mainRenderTargetView = nullptr;
-    }
-    g_pSwapChain->ResizeBuffers(0, (UINT)width, (UINT)height, DXGI_FORMAT_UNKNOWN, 0);
-    ID3D11Texture2D* pBackBuffer = nullptr;
-    HRESULT hr = g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
-    if (SUCCEEDED(hr) && pBackBuffer) {
-        g_pd3dDevice->CreateRenderTargetView(pBackBuffer, nullptr, &g_mainRenderTargetView);
-        pBackBuffer->Release();
-    }
-}
-
 void InitOverlay() {
-    int overlayX = 0;
-    int overlayY = 0;
-    int overlayW = 0;
-    int overlayH = 0;
-    mem.QueryOverlayBounds(overlayX, overlayY, overlayW, overlayH);
-    ScreenWidth = overlayW;
-    ScreenHeight = overlayH;
+    mem.UpdateGameWindow();
 
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(NULL), NULL, NULL, NULL, NULL, L"SaturnClass", NULL }; RegisterClassExW(&wc);
-    g_hwndOverlay = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW, L"SaturnClass", L"SaturnOverlay", WS_POPUP, overlayX, overlayY, ScreenWidth, ScreenHeight, NULL, NULL, wc.hInstance, NULL);
-    MARGINS margins = { -1 }; DwmExtendFrameIntoClientArea(g_hwndOverlay, &margins); SetLayeredWindowAttributes(g_hwndOverlay, 0, 255, LWA_ALPHA);
+    g_hwndOverlay = CreateWindowExW(
+        WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        L"SaturnClass", L"SaturnOverlay", WS_POPUP,
+        mem.LastRect.left, mem.LastRect.top, ScreenWidth, ScreenHeight,
+        NULL, NULL, wc.hInstance, NULL);
+
+    MARGINS margins = { -1, -1, -1, -1 };
+    DwmExtendFrameIntoClientArea(g_hwndOverlay, &margins);
     DXGI_SWAP_CHAIN_DESC sd = { 0 }; sd.BufferCount = 2; sd.BufferDesc.Width = ScreenWidth; sd.BufferDesc.Height = ScreenHeight; sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; sd.BufferDesc.RefreshRate.Numerator = 60; sd.BufferDesc.RefreshRate.Denominator = 1; sd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH; sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; sd.OutputWindow = g_hwndOverlay; sd.SampleDesc.Count = 1; sd.Windowed = TRUE; sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
     D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, NULL, 0, D3D11_SDK_VERSION, &sd, &g_pSwapChain, &g_pd3dDevice, NULL, &g_pd3dDeviceContext);
     ID3D11Texture2D* pBackBuffer = nullptr; HRESULT hr = g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer)); if (SUCCEEDED(hr) && pBackBuffer) { g_pd3dDevice->CreateRenderTargetView(pBackBuffer, NULL, &g_mainRenderTargetView); pBackBuffer->Release(); }
@@ -214,21 +261,8 @@ void InitOverlay() {
     for (int i = 0; i < 50; i++) g_Particles.push_back({ (float)(rand() % ScreenWidth), (float)(rand() % ScreenHeight), ((rand() % 100) - 50) / 200.0f, 0, (float)(rand() % 2 + 1), (float)(rand() % 100) / 100.0f });
 }
 
-static void EnableDpiAwareness() {
-    HMODULE user32 = GetModuleHandleW(L"user32.dll");
-    if (user32) {
-        using SetCtxFn = BOOL(WINAPI*)(DPI_AWARENESS_CONTEXT);
-        auto setCtx = reinterpret_cast<SetCtxFn>(GetProcAddress(user32, "SetProcessDpiAwarenessContext"));
-        if (setCtx) {
-            setCtx(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-            return;
-        }
-    }
-    SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
-}
-
 int main() {
-    EnableDpiAwareness();
+    SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     SetConsoleTitleA("JANG DMA Loader [WT EDITION]");
     std::cout << "[>] Initializing DMA edition..." << std::endl;
     std::ifstream f("license.dat"); if (f.good()) settings::bEulaAccepted = true;
@@ -250,16 +284,15 @@ int main() {
         Input::Init();
     }
 
-    std::wstring targetW(settings::targetProcess.begin(), settings::targetProcess.end());
-    std::cout << "[>] Waiting for " << settings::targetProcess << " on target machine... (Press END to cancel)" << std::endl;
-    while (mem.GetPID(targetW) == 0) {
+    std::cout << "[>] Waiting for aces.exe on target machine... (Press END to cancel)" << std::endl;
+    while (mem.GetPID(L"aces.exe") == 0) {
         if (GetAsyncKeyState(VK_END) & 1) return 0;
         Sleep(1000);
     }
-    std::cout << " [+] Found " << settings::targetProcess << "!" << std::endl;
+    std::cout << " [+] Found aces.exe!" << std::endl;
 
     std::cout << " [>] Attaching to process..." << std::endl;
-    while (!mem.Attach(settings::targetProcess)) {
+    while (!mem.Attach("aces.exe")) {
         if (GetAsyncKeyState(VK_END) & 1) return 0;
         Sleep(1000);
     }
@@ -268,13 +301,36 @@ int main() {
     if (!mem.UpdateOffsets()) {
         std::cout << "[!] Using built-in offset defaults." << std::endl;
     }
+
+    std::cout << "[>] Overlay align mode: " << settings::overlayAlignMode << std::endl;
+    if (settings::overlayAlignMode != "manual") {
+        if (!settings::captureWindowTitle.empty()) {
+            std::cout << " [>] Looking for capture window: " << settings::captureWindowTitle << std::endl;
+        }
+        else if (settings::overlayAutoCapture) {
+            std::cout << " [>] Auto-detecting capture preview window (OBS/PotPlayer/etc.)" << std::endl;
+        }
+    }
+
     InitOverlay();
-    std::cout << " [+] Overlay aligned: " << g_overlayAlignSource << " (" << ScreenWidth << "x" << ScreenHeight << ")" << std::endl;
+    std::cout << " [+] Overlay " << ScreenWidth << "x" << ScreenHeight
+        << " @ (" << mem.LastRect.left << "," << mem.LastRect.top << ")"
+        << " source=" << mem.overlayAlignSource << std::endl;
+    if (mem.GameHwnd == NULL && settings::overlayAlignMode != "manual") {
+        std::cout << "[!] Capture window not found. Set capture_window in dma_config.ini to your preview window title." << std::endl;
+        LogVisibleCaptureCandidates();
+    }
+
+    std::thread(FastViewThread).detach();
     std::thread(CacheThread).detach();
 
     float menuAlpha = 0.0f; int activeTab = 0;
     LONG exStyle = GetWindowLong(g_hwndOverlay, GWL_EXSTYLE);
     bool isClickThrough = !bShowMenu;
+    uint64_t lastSeenViewGen = 0;
+    uint64_t lastSeenEntityGen = 0;
+    uint64_t effectiveDrawFrames = 0;
+    uint64_t loopFrames = 0;
 
     if (bShowMenu) { SetWindowLong(g_hwndOverlay, GWL_EXSTYLE, exStyle & ~WS_EX_TRANSPARENT); SetForegroundWindow(g_hwndOverlay); }
     else { SetWindowLong(g_hwndOverlay, GWL_EXSTYLE, exStyle | WS_EX_TRANSPARENT); }
@@ -285,7 +341,17 @@ int main() {
 
         mem.UpdateGameWindow();
         HWND fgWindow = GetForegroundWindow();
-        bool isGameActive = (fgWindow == g_hwndOverlay || fgWindow == mem.GameHwnd || mem.GameHwnd == NULL);
+        bool isGameActive = false;
+        if (mem.GameHwnd != NULL) {
+            isGameActive = (fgWindow == mem.GameHwnd || fgWindow == g_hwndOverlay);
+        }
+        else if (settings::overlayAlignMode == "manual") {
+            RECT overlayRect{};
+            GetWindowRect(g_hwndOverlay, &overlayRect);
+            POINT cursor{};
+            GetCursorPos(&cursor);
+            isGameActive = PtInRect(&overlayRect, cursor);
+        }
 
         static auto lastToggle = GetTickCount64();
         if (isGameActive && (GetAsyncKeyState(VK_INSERT) & 1) && (GetTickCount64() - lastToggle > 200)) {
@@ -309,6 +375,13 @@ int main() {
         }
 
         if (settings::bStreamerMode) SetWindowDisplayAffinity(g_hwndOverlay, WDA_EXCLUDEFROMCAPTURE); else SetWindowDisplayAffinity(g_hwndOverlay, WDA_NONE);
+
+        const uint64_t viewGen = shared::viewGeneration.load(std::memory_order_relaxed);
+        const uint64_t entityGen = shared::entityGeneration.load(std::memory_order_relaxed);
+        UpdatePerfCounters(lastSeenViewGen, lastSeenEntityGen, effectiveDrawFrames, loopFrames);
+        lastSeenViewGen = viewGen;
+        lastSeenEntityGen = entityGen;
+
         ImGui_ImplDX11_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame(); ImDrawList* bg = ImGui::GetBackgroundDrawList();
 
         if (settings::bEulaAccepted) { RenderESP(bg); DrawWatermark(bg); } RenderNotifications(bg);
@@ -358,12 +431,17 @@ int main() {
                     ImGui::Text("DASHBOARD"); ImGui::Separator(); ImGui::Spacing();
                     ImGui::Text("Mode: DMA Secondary Machine");
                     ImGui::Text("Device: %s", settings::dmaDevice.c_str());
-                    ImGui::Text("DMA Folder: %s", g_dma.dllDirectory.c_str());
-                    ImGui::Text("Target: %s", settings::targetProcess.c_str());
                     ImGui::Text("Target PID: %lu", mem.ProcessID);
                     ImGui::Text("Base: 0x%llX", (unsigned long long)mem.BaseAddress);
-                    ImGui::Text("Overlay: %dx%d", ScreenWidth, ScreenHeight);
-                    ImGui::Text("Align: %s", g_overlayAlignSource.c_str());
+                    ImGui::Text("Overlay: %dx%d @ (%d,%d)", ScreenWidth, ScreenHeight, mem.LastRect.left, mem.LastRect.top);
+                    ImGui::Text("Align: %s", mem.overlayAlignSource.c_str());
+                    ImGui::Text("Draw FPS: %u | View: %u | Data: %u | Loop: %u | Cache: %ums",
+                        perf::drawFps.load(), perf::viewFps.load(), perf::entityFps.load(), perf::loopFps.load(), perf::cacheMs.load());
+                    if (mem.GameHwnd) {
+                        char title[128] = {};
+                        GetWindowTextA(mem.GameHwnd, title, sizeof(title));
+                        ImGui::Text("Target: %s", title);
+                    }
                     ImGui::Text("Kmbox: %s", Input::IsReady() ? "Connected" : (settings::bUseKmbox ? "Failed" : "Disabled"));
                     if (!offsets::api_version.empty()) ImGui::Text("Offsets: v%s", offsets::api_version.c_str());
                 }
@@ -488,8 +566,6 @@ int main() {
                 else if (activeTab == 4) {
                     ImGui::BeginChild("Cfg", ImVec2(0, 0), true); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "SYSTEM & CONFIG"); ImGui::Separator();
                     ImGui::TextDisabled("Edit dma_config.ini and restart to apply DMA/Kmbox settings.");
-                    ImGui::TextDisabled("DLLs are loaded from the dma subfolder next to the executable.");
-                    ImGui::TextDisabled("Overlay align: foreground / capture / manual in dma_config.ini");
                     ImGui::Text("Capture Window: %s", settings::captureWindowTitle.empty() ? "(fullscreen)" : settings::captureWindowTitle.c_str());
                     ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
                     UI::Toggle("Auto Team Detect", &settings::bAutoTeam); if (!settings::bAutoTeam) { ImGui::Indent(15.0f); ImGui::SliderInt("Manual ID", &settings::ManualTeam, 0, 4); ImGui::Unindent(15.0f); }

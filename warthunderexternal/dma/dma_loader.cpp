@@ -1,3 +1,6 @@
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include "dma_loader.hpp"
 #include <iostream>
 #include <filesystem>
@@ -11,7 +14,7 @@ static std::string WideToUtf8(const std::wstring& value) {
     int size = WideCharToMultiByte(CP_UTF8, 0, value.c_str(), -1, nullptr, 0, nullptr, nullptr);
     if (size <= 1) return {};
     std::string out(static_cast<size_t>(size - 1), '\0');
-    WideCharToMultiByte(CP_UTF8, 0, value.c_str(), -1, out.data(), size, nullptr, nullptr);
+    WideCharToMultiByte(CP_UTF8, 0, value.c_str(), -1, &out[0], size, nullptr, nullptr);
     return out;
 }
 
@@ -43,7 +46,7 @@ HMODULE DmaLoader::LoadDependency(const wchar_t* fileName) {
     return module;
 }
 
-bool DmaLoader::VerifyDependencies() const {
+bool DmaLoader::VerifyDependencies() {
     namespace fs = std::filesystem;
     const wchar_t* required[] = {
         L"FTD3XX.dll",
@@ -79,7 +82,7 @@ bool DmaLoader::LoadLibraries(const std::string& relativeFolder) {
     if (vmmModule) return true;
 
     const std::wstring exeDir = GetExeDirectoryW();
-    dllDirectoryW = (std::filesystem::path(exeDir) / std::wstring(relativeFolder.begin(), relativeFolder.end())).wstring();
+    dllDirectoryW = (std::filesystem::path(exeDir) / relativeFolder).wstring();
     dllDirectory = WideToUtf8(dllDirectoryW);
 
     if (!std::filesystem::exists(dllDirectoryW)) {
@@ -217,7 +220,7 @@ bool DmaLoader::Read(DWORD pid, ULONG64 address, void* buffer, size_t size) {
     constexpr size_t maxChunk = 0x00100000;
 
     while (offset < size) {
-        const DWORD chunk = static_cast<DWORD>(std::min(size - offset, maxChunk));
+        const DWORD chunk = static_cast<DWORD>((std::min)(size - offset, maxChunk));
         DWORD bytesRead = 0;
         if (!pfnMemReadEx(handle, pid, address + offset, bytes + offset, chunk, &bytesRead, VMMDLL_FLAG_NOCACHE) || bytesRead != chunk) {
             return false;

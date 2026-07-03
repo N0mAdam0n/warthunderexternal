@@ -6,7 +6,9 @@ namespace settings {
     extern std::string dmaDevice;
     extern bool dmaDisableRefresh;
     extern std::string targetProcess;
+    extern int overlayAlignMode;
     extern std::string captureWindowTitle;
+    extern bool overlayUseClientRect;
     extern int overlayX;
     extern int overlayY;
     extern int overlayWidth;

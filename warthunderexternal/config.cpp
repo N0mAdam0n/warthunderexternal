@@ -8,7 +8,9 @@ namespace settings {
     std::string dmaDevice = "fpga";
     bool dmaDisableRefresh = true;
     std::string targetProcess = "aces.exe";
+    int overlayAlignMode = 2;
     std::string captureWindowTitle;
+    bool overlayUseClientRect = true;
     int overlayX = 0;
     int overlayY = 0;
     int overlayWidth = 0;
@@ -45,7 +47,13 @@ static void ApplyConfigValue(const std::string& section, const std::string& key,
     }
 
     if (section == "overlay") {
-        if (key == "capture_window") settings::captureWindowTitle = value;
+        if (key == "align") {
+            if (value == "manual") settings::overlayAlignMode = 0;
+            else if (value == "capture") settings::overlayAlignMode = 1;
+            else if (value == "foreground") settings::overlayAlignMode = 2;
+        }
+        else if (key == "use_client_rect") settings::overlayUseClientRect = (value == "1" || value == "true" || value == "yes");
+        else if (key == "capture_window") settings::captureWindowTitle = value;
         else if (key == "overlay_x" && !value.empty()) settings::overlayX = std::stoi(value);
         else if (key == "overlay_y" && !value.empty()) settings::overlayY = std::stoi(value);
         else if (key == "overlay_width" && !value.empty()) settings::overlayWidth = std::stoi(value);

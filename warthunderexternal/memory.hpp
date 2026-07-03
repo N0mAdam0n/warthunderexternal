@@ -1,4 +1,7 @@
 #pragma once
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <Windows.h>
 #include <iostream>
 #include <string>
@@ -33,9 +36,12 @@ public:
     bool Attach(const std::string& procName);
     bool UpdateOffsets();
     bool UpdateGameWindow();
+    bool QueryOverlayBounds(int& x, int& y, int& w, int& h);
 };
 
 extern Memory mem;
+extern void ResizeOverlayRenderTargets(int width, int height);
+extern std::string g_overlayAlignSource;
 
 inline bool Memory::IsValidPtr(uintptr_t ptr) {
     return (ptr >= 0x10000ULL && ptr < 0x00007FFFFFFFFFFFULL);

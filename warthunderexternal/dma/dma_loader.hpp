@@ -1,4 +1,7 @@
 #pragma once
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
 #include <Windows.h>
 #include <cstdint>
 #include <string>
@@ -53,7 +56,7 @@ private:
 
     std::wstring ResolveDllPath(const std::wstring& fileName) const;
     HMODULE LoadDependency(const wchar_t* fileName);
-    bool VerifyDependencies() const;
+    bool VerifyDependencies();
     bool ResolveExports();
 };
 

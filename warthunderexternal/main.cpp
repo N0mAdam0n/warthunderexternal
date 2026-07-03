@@ -1,5 +1,6 @@
 #define NOMINMAX
 #include <Windows.h>
+#include <shellscalingapi.h>
 #include <iostream>
 #include <vector>
 #include <string>
@@ -26,6 +27,7 @@
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "shcore.lib")
 
 Memory mem;
 int ScreenWidth = GetSystemMetrics(SM_CXSCREEN);
@@ -178,12 +180,32 @@ void SetupStyle() {
     else io.Fonts->AddFontDefault();
 }
 
+void ResizeOverlayRenderTargets(int width, int height) {
+    if (!g_pSwapChain || width <= 0 || height <= 0) return;
+    if (g_mainRenderTargetView) {
+        g_mainRenderTargetView->Release();
+        g_mainRenderTargetView = nullptr;
+    }
+    g_pSwapChain->ResizeBuffers(0, (UINT)width, (UINT)height, DXGI_FORMAT_UNKNOWN, 0);
+    ID3D11Texture2D* pBackBuffer = nullptr;
+    HRESULT hr = g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
+    if (SUCCEEDED(hr) && pBackBuffer) {
+        g_pd3dDevice->CreateRenderTargetView(pBackBuffer, nullptr, &g_mainRenderTargetView);
+        pBackBuffer->Release();
+    }
+}
+
 void InitOverlay() {
-    if (settings::overlayWidth > 0) ScreenWidth = settings::overlayWidth;
-    if (settings::overlayHeight > 0) ScreenHeight = settings::overlayHeight;
+    int overlayX = 0;
+    int overlayY = 0;
+    int overlayW = 0;
+    int overlayH = 0;
+    mem.QueryOverlayBounds(overlayX, overlayY, overlayW, overlayH);
+    ScreenWidth = overlayW;
+    ScreenHeight = overlayH;
 
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(NULL), NULL, NULL, NULL, NULL, L"SaturnClass", NULL }; RegisterClassExW(&wc);
-    g_hwndOverlay = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW, L"SaturnClass", L"SaturnOverlay", WS_POPUP, settings::overlayX, settings::overlayY, ScreenWidth, ScreenHeight, NULL, NULL, wc.hInstance, NULL);
+    g_hwndOverlay = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW, L"SaturnClass", L"SaturnOverlay", WS_POPUP, overlayX, overlayY, ScreenWidth, ScreenHeight, NULL, NULL, wc.hInstance, NULL);
     MARGINS margins = { -1 }; DwmExtendFrameIntoClientArea(g_hwndOverlay, &margins); SetLayeredWindowAttributes(g_hwndOverlay, 0, 255, LWA_ALPHA);
     DXGI_SWAP_CHAIN_DESC sd = { 0 }; sd.BufferCount = 2; sd.BufferDesc.Width = ScreenWidth; sd.BufferDesc.Height = ScreenHeight; sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; sd.BufferDesc.RefreshRate.Numerator = 60; sd.BufferDesc.RefreshRate.Denominator = 1; sd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH; sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; sd.OutputWindow = g_hwndOverlay; sd.SampleDesc.Count = 1; sd.Windowed = TRUE; sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
     D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, NULL, 0, D3D11_SDK_VERSION, &sd, &g_pSwapChain, &g_pd3dDevice, NULL, &g_pd3dDeviceContext);
@@ -192,7 +214,21 @@ void InitOverlay() {
     for (int i = 0; i < 50; i++) g_Particles.push_back({ (float)(rand() % ScreenWidth), (float)(rand() % ScreenHeight), ((rand() % 100) - 50) / 200.0f, 0, (float)(rand() % 2 + 1), (float)(rand() % 100) / 100.0f });
 }
 
+static void EnableDpiAwareness() {
+    HMODULE user32 = GetModuleHandleW(L"user32.dll");
+    if (user32) {
+        using SetCtxFn = BOOL(WINAPI*)(DPI_AWARENESS_CONTEXT);
+        auto setCtx = reinterpret_cast<SetCtxFn>(GetProcAddress(user32, "SetProcessDpiAwarenessContext"));
+        if (setCtx) {
+            setCtx(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+            return;
+        }
+    }
+    SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE);
+}
+
 int main() {
+    EnableDpiAwareness();
     SetConsoleTitleA("JANG DMA Loader [WT EDITION]");
     std::cout << "[>] Initializing DMA edition..." << std::endl;
     std::ifstream f("license.dat"); if (f.good()) settings::bEulaAccepted = true;
@@ -232,7 +268,9 @@ int main() {
     if (!mem.UpdateOffsets()) {
         std::cout << "[!] Using built-in offset defaults." << std::endl;
     }
-    InitOverlay(); std::thread(CacheThread).detach();
+    InitOverlay();
+    std::cout << " [+] Overlay aligned: " << g_overlayAlignSource << " (" << ScreenWidth << "x" << ScreenHeight << ")" << std::endl;
+    std::thread(CacheThread).detach();
 
     float menuAlpha = 0.0f; int activeTab = 0;
     LONG exStyle = GetWindowLong(g_hwndOverlay, GWL_EXSTYLE);
@@ -324,7 +362,8 @@ int main() {
                     ImGui::Text("Target: %s", settings::targetProcess.c_str());
                     ImGui::Text("Target PID: %lu", mem.ProcessID);
                     ImGui::Text("Base: 0x%llX", (unsigned long long)mem.BaseAddress);
-                    ImGui::Text("Overlay: %dx%d @ (%d,%d)", ScreenWidth, ScreenHeight, settings::overlayX, settings::overlayY);
+                    ImGui::Text("Overlay: %dx%d", ScreenWidth, ScreenHeight);
+                    ImGui::Text("Align: %s", g_overlayAlignSource.c_str());
                     ImGui::Text("Kmbox: %s", Input::IsReady() ? "Connected" : (settings::bUseKmbox ? "Failed" : "Disabled"));
                     if (!offsets::api_version.empty()) ImGui::Text("Offsets: v%s", offsets::api_version.c_str());
                 }
@@ -450,6 +489,7 @@ int main() {
                     ImGui::BeginChild("Cfg", ImVec2(0, 0), true); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "SYSTEM & CONFIG"); ImGui::Separator();
                     ImGui::TextDisabled("Edit dma_config.ini and restart to apply DMA/Kmbox settings.");
                     ImGui::TextDisabled("DLLs are loaded from the dma subfolder next to the executable.");
+                    ImGui::TextDisabled("Overlay align: foreground / capture / manual in dma_config.ini");
                     ImGui::Text("Capture Window: %s", settings::captureWindowTitle.empty() ? "(fullscreen)" : settings::captureWindowTitle.c_str());
                     ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
                     UI::Toggle("Auto Team Detect", &settings::bAutoTeam); if (!settings::bAutoTeam) { ImGui::Indent(15.0f); ImGui::SliderInt("Manual ID", &settings::ManualTeam, 0, 4); ImGui::Unindent(15.0f); }

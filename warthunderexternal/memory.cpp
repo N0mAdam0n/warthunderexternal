@@ -3,69 +3,56 @@
 #include <iostream>
 #include <cstring>
 
-VmmdllApi g_vmm;
-
 bool Memory::Connect() {
-    if (g_vmm.handle) return true;
-    if (!g_vmm.dll && !g_vmm.Load()) {
-        std::cout << "[!] Failed to load vmm.dll - place MemProcFS files next to the executable." << std::endl;
+    if (g_dma.IsReady()) return true;
+
+    if (!g_dma.LoadLibraries(settings::dmaFolder)) {
+        std::cout << "[!] " << g_dma.lastError << std::endl;
         return false;
     }
 
-    std::string device = settings::dmaDevice.empty() ? "fpga" : settings::dmaDevice;
-    std::string deviceArg = "-device";
-    std::string deviceVal = device;
-    std::string norefresh = "-norefresh";
-    std::string waitInit = "-waitinitialize";
-
-    LPCSTR args[] = { "", deviceArg.c_str(), deviceVal.c_str(), norefresh.c_str(), waitInit.c_str() };
-    g_vmm.handle = g_vmm.Initialize(5, args);
-    if (!g_vmm.handle) {
-        std::cout << "[!] VMMDLL_Initialize failed. Check DMA device (" << device << ")." << std::endl;
+    if (!g_dma.Initialize(settings::dmaDevice, settings::dmaDisableRefresh)) {
+        std::cout << "[!] " << g_dma.lastError << std::endl;
         return false;
     }
 
-    std::cout << " [+] DMA connected via device: " << device << std::endl;
     return true;
 }
 
 void Memory::Disconnect() {
-    g_vmm.Unload();
+    g_dma.Shutdown();
     ProcessID = 0;
     BaseAddress = 0;
 }
 
 bool Memory::ReadBuffer(uintptr_t addr, void* buffer, size_t size) {
-    if (!g_vmm.handle || !ProcessID || !addr || !buffer || size == 0) return false;
-
-    DWORD bytesRead = 0;
-    return g_vmm.MemReadEx(g_vmm.handle, ProcessID, addr, reinterpret_cast<PBYTE>(buffer), static_cast<DWORD>(size), &bytesRead, VMMDLL_FLAG_NOCACHE) && bytesRead == size;
+    if (!g_dma.IsReady() || !ProcessID || !addr || !buffer || size == 0) return false;
+    return g_dma.Read(ProcessID, addr, buffer, size);
 }
 
 std::string Memory::ReadString(uintptr_t addr, size_t maxLen) {
     std::vector<char> buf(maxLen);
-    ReadBuffer(addr, buf.data(), maxLen);
+    if (!ReadBuffer(addr, buf.data(), maxLen)) return {};
     buf[maxLen - 1] = 0;
     return std::string(buf.data());
 }
 
 DWORD Memory::GetPID(const std::wstring& procName) {
-    if (!g_vmm.handle) return 0;
-
+    if (!g_dma.IsReady()) return 0;
     std::string narrow(procName.begin(), procName.end());
-    DWORD pid = 0;
-    if (g_vmm.PidGetFromName(g_vmm.handle, narrow.c_str(), &pid)) {
-        return pid;
-    }
-    return 0;
+    return g_dma.PidFromName(narrow);
 }
 
 bool Memory::Attach(const std::string& procName) {
     ProcessID = GetPID(std::wstring(procName.begin(), procName.end()));
     if (ProcessID == 0) return false;
 
-    BaseAddress = static_cast<uintptr_t>(g_vmm.ProcessGetModuleBaseU(g_vmm.handle, ProcessID, procName.c_str()));
-    return BaseAddress != 0;
+    BaseAddress = static_cast<uintptr_t>(g_dma.ModuleBase(ProcessID, procName));
+    if (BaseAddress == 0) return false;
+
+    std::cout << " [+] Attached to " << procName << " (PID: " << ProcessID << ", Base: 0x"
+        << std::hex << BaseAddress << std::dec << ")" << std::endl;
+    return true;
 }
 
 bool Memory::UpdateOffsets() {

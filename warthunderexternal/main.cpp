@@ -214,15 +214,16 @@ int main() {
         Input::Init();
     }
 
-    std::cout << "[>] Waiting for aces.exe on target machine... (Press END to cancel)" << std::endl;
-    while (mem.GetPID(L"aces.exe") == 0) {
+    std::wstring targetW(settings::targetProcess.begin(), settings::targetProcess.end());
+    std::cout << "[>] Waiting for " << settings::targetProcess << " on target machine... (Press END to cancel)" << std::endl;
+    while (mem.GetPID(targetW) == 0) {
         if (GetAsyncKeyState(VK_END) & 1) return 0;
         Sleep(1000);
     }
-    std::cout << " [+] Found aces.exe!" << std::endl;
+    std::cout << " [+] Found " << settings::targetProcess << "!" << std::endl;
 
     std::cout << " [>] Attaching to process..." << std::endl;
-    while (!mem.Attach("aces.exe")) {
+    while (!mem.Attach(settings::targetProcess)) {
         if (GetAsyncKeyState(VK_END) & 1) return 0;
         Sleep(1000);
     }
@@ -319,6 +320,8 @@ int main() {
                     ImGui::Text("DASHBOARD"); ImGui::Separator(); ImGui::Spacing();
                     ImGui::Text("Mode: DMA Secondary Machine");
                     ImGui::Text("Device: %s", settings::dmaDevice.c_str());
+                    ImGui::Text("DMA Folder: %s", g_dma.dllDirectory.c_str());
+                    ImGui::Text("Target: %s", settings::targetProcess.c_str());
                     ImGui::Text("Target PID: %lu", mem.ProcessID);
                     ImGui::Text("Base: 0x%llX", (unsigned long long)mem.BaseAddress);
                     ImGui::Text("Overlay: %dx%d @ (%d,%d)", ScreenWidth, ScreenHeight, settings::overlayX, settings::overlayY);
@@ -446,6 +449,7 @@ int main() {
                 else if (activeTab == 4) {
                     ImGui::BeginChild("Cfg", ImVec2(0, 0), true); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "SYSTEM & CONFIG"); ImGui::Separator();
                     ImGui::TextDisabled("Edit dma_config.ini and restart to apply DMA/Kmbox settings.");
+                    ImGui::TextDisabled("DLLs are loaded from the dma subfolder next to the executable.");
                     ImGui::Text("Capture Window: %s", settings::captureWindowTitle.empty() ? "(fullscreen)" : settings::captureWindowTitle.c_str());
                     ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
                     UI::Toggle("Auto Team Detect", &settings::bAutoTeam); if (!settings::bAutoTeam) { ImGui::Indent(15.0f); ImGui::SliderInt("Manual ID", &settings::ManualTeam, 0, 4); ImGui::Unindent(15.0f); }

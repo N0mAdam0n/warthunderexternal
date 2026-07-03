@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include "offsets.hpp"
+#include "dma/dma_loader.hpp"
 
 extern int ScreenWidth;
 extern int ScreenHeight;
@@ -36,10 +37,6 @@ public:
 
 extern Memory mem;
 
-#include "dma/vmmdll_api.hpp"
-
-extern VmmdllApi g_vmm;
-
 inline bool Memory::IsValidPtr(uintptr_t ptr) {
     return (ptr >= 0x10000ULL && ptr < 0x00007FFFFFFFFFFFULL);
 }
@@ -47,15 +44,13 @@ inline bool Memory::IsValidPtr(uintptr_t ptr) {
 template <typename T>
 T Memory::Read(uintptr_t addr) {
     T buffer = {};
-    if (!g_vmm.handle || !ProcessID || !addr) return buffer;
-
-    DWORD bytesRead = 0;
-    g_vmm.MemReadEx(g_vmm.handle, ProcessID, addr, reinterpret_cast<PBYTE>(&buffer), sizeof(T), &bytesRead, VMMDLL_FLAG_NOCACHE);
+    if (!g_dma.IsReady() || !ProcessID || !addr) return buffer;
+    g_dma.Read(ProcessID, addr, &buffer, sizeof(T));
     return buffer;
 }
 
 template <typename T>
 bool Memory::Write(uintptr_t addr, const T& val) {
-    if (!g_vmm.handle || !ProcessID || !addr) return false;
-    return g_vmm.MemWrite(g_vmm.handle, ProcessID, addr, reinterpret_cast<PBYTE>(const_cast<T*>(&val)), sizeof(T));
+    if (!g_dma.IsReady() || !ProcessID || !addr) return false;
+    return g_dma.Write(ProcessID, addr, &val, sizeof(T));
 }

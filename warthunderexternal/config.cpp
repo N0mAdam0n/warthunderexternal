@@ -4,7 +4,10 @@
 #include <cctype>
 
 namespace settings {
+    std::string dmaFolder = "dma";
     std::string dmaDevice = "fpga";
+    bool dmaDisableRefresh = true;
+    std::string targetProcess = "aces.exe";
     std::string captureWindowTitle;
     int overlayX = 0;
     int overlayY = 0;
@@ -27,6 +30,14 @@ static std::string Trim(const std::string& value) {
 
 static void ApplyConfigValue(const std::string& section, const std::string& key, const std::string& rawValue) {
     std::string value = Trim(rawValue);
+
+    if (section == "dma") {
+        if (key == "folder" && !value.empty()) settings::dmaFolder = value;
+        else if (key == "device" && !value.empty()) settings::dmaDevice = value;
+        else if (key == "disable_refresh") settings::dmaDisableRefresh = (value == "1" || value == "true" || value == "yes");
+        else if (key == "target_process" && !value.empty()) settings::targetProcess = value;
+        return;
+    }
 
     if (section == "device" && key == "device") {
         if (!value.empty()) settings::dmaDevice = value;

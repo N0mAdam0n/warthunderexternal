@@ -2,7 +2,10 @@
 #include <string>
 
 namespace settings {
+    extern std::string dmaFolder;
     extern std::string dmaDevice;
+    extern bool dmaDisableRefresh;
+    extern std::string targetProcess;
     extern std::string captureWindowTitle;
     extern int overlayX;
     extern int overlayY;

@@ -4,6 +4,7 @@
 #include <cctype>
 
 namespace settings {
+    std::string dmaFolder = "dma";
     std::string dmaDevice = "fpga";
     std::string captureWindowTitle;
     std::string overlayAlignMode = "capture";
@@ -30,6 +31,12 @@ static std::string Trim(const std::string& value) {
 
 static void ApplyConfigValue(const std::string& section, const std::string& key, const std::string& rawValue) {
     std::string value = Trim(rawValue);
+
+    if (section == "dma") {
+        if (key == "folder" && !value.empty()) settings::dmaFolder = value;
+        else if (key == "device" && !value.empty()) settings::dmaDevice = value;
+        return;
+    }
 
     if (section == "device" && key == "device") {
         if (!value.empty()) settings::dmaDevice = value;

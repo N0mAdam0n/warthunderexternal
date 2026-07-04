@@ -2,6 +2,7 @@
 #include <string>
 
 namespace settings {
+    extern std::string dmaFolder;
     extern std::string dmaDevice;
     extern std::string captureWindowTitle;
     extern std::string overlayAlignMode;

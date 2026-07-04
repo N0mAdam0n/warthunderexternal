@@ -66,10 +66,6 @@ bool DmaLoader::VerifyDependencies() {
         std::wcout << L" [i] Found leechcore_driver.dll" << std::endl;
     }
 
-    if (fs::exists(ResolveDllPath(L"VmmSharpEx.dll")) || fs::exists(ResolveDllPath(L"VmmSharpEX.dll"))) {
-        std::wcout << L" [i] Found VmmSharpEx.dll (.NET bundle, not loaded by native client)" << std::endl;
-    }
-
     if (missing) {
         lastError = "DMA dependencies are missing from the dma folder.";
         return false;
@@ -88,6 +84,7 @@ bool DmaLoader::LoadLibraries(const std::string& relativeFolder) {
     if (!std::filesystem::exists(dllDirectoryW)) {
         lastError = "DMA folder not found: " + dllDirectory;
         std::cout << "[!] " << lastError << std::endl;
+        std::cout << "     Copy MemProcFS DLLs into: " << dllDirectory << std::endl;
         return false;
     }
 

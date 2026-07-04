@@ -8,12 +8,22 @@
 extern int ScreenWidth;
 extern int ScreenHeight;
 
-bool WorldToScreen(const Vector3& pos, ImVec2& out, const Matrix4x4& vm) {
-    float cw = pos.x * vm.m[3] + pos.y * vm.m[7] + pos.z * vm.m[11] + vm.m[15]; if (cw < 0.1f) return false;
-    float inv_w = 1.0f / cw;
-    out.x = ((pos.x * vm.m[0] + pos.y * vm.m[4] + pos.z * vm.m[8] + vm.m[12]) * inv_w * 0.5f + 0.5f) * (float)ScreenWidth;
-    out.y = (0.5f - (pos.x * vm.m[1] + pos.y * vm.m[5] + pos.z * vm.m[9] + vm.m[13]) * inv_w * 0.5f) * (float)ScreenHeight;
+static bool WorldToScreenMatrix(const Vector3& pos, ImVec2& out, const Matrix4x4& vm) {
+    const float cw = pos.x * vm.m[3] + pos.y * vm.m[7] + pos.z * vm.m[11] + vm.m[15];
+    if (cw < 0.01f) return false;
+    const float invW = 1.0f / cw;
+    out.x = ((pos.x * vm.m[0] + pos.y * vm.m[4] + pos.z * vm.m[8] + vm.m[12]) * invW * 0.5f + 0.5f) * (float)ScreenWidth;
+    out.y = (0.5f - (pos.x * vm.m[1] + pos.y * vm.m[5] + pos.z * vm.m[9] + vm.m[13]) * invW * 0.5f) * (float)ScreenHeight;
     return true;
+}
+
+bool WorldToScreen(const Vector3& pos, ImVec2& out, const Matrix4x4& vm) {
+    return WorldToScreenMatrix(pos, out, vm);
+}
+
+static bool ProjectToScreen(const Vector3& pos, ImVec2& out, const Matrix4x4& primary, const Matrix4x4& fallback) {
+    if (WorldToScreenMatrix(pos, out, primary)) return true;
+    return WorldToScreenMatrix(pos, out, fallback);
 }
 
 Vector3 TransformVec(const Vector3& v, const Matrix3x3& mat, const Vector3& pos) {
@@ -38,7 +48,23 @@ static Vector3 PredictEntityPos(const CachedEntity& ent) {
     if (ageSec < 0.0f) ageSec = 0.0f;
     if (ageSec > 0.12f) ageSec = 0.12f;
 
-    return ent.position + ent.velocity * ageSec;
+    Vector3 vel = ent.velocity;
+    if (std::isnan(vel.x) || std::isnan(vel.y) || std::isnan(vel.z)
+        || std::isinf(vel.x) || std::isinf(vel.y) || std::isinf(vel.z)) {
+        return ent.position;
+    }
+
+    const float vLen = vel.Length();
+    const float maxVel = ent.isAir ? 900.0f : 120.0f;
+    if (vLen > maxVel && vLen > 0.001f) {
+        vel = vel * (maxVel / vLen);
+    }
+
+    const Vector3 predicted = ent.position + vel * ageSec;
+    if (std::isnan(predicted.x) || std::isnan(predicted.y) || std::isnan(predicted.z)) {
+        return ent.position;
+    }
+    return predicted;
 }
 
 bool IsAimingAtMe(const Vector3& enemyPos, const Vector3& localPos, const Matrix3x3& enemyRot) {
@@ -66,18 +92,35 @@ void MoveMouse(float x, float y) {
     );
 }
 
+static bool IsSaneUnitPosition(const Vector3& pos) {
+    return !std::isnan(pos.x) && !std::isnan(pos.y) && !std::isnan(pos.z)
+        && !std::isinf(pos.x) && !std::isinf(pos.y) && !std::isinf(pos.z)
+        && (std::fabs(pos.x) > 0.01f || std::fabs(pos.y) > 0.01f || std::fabs(pos.z) > 0.01f);
+}
+
+static float CalcHorizontalRange(const Vector3& target, const Vector3& localUnit) {
+    const float dx = target.x - localUnit.x;
+    const float dz = target.z - localUnit.z;
+    return std::sqrt(dx * dx + dz * dz);
+}
+
 void RenderESP(ImDrawList* draw) {
     std::vector<CachedEntity> localEntities;
     std::vector<CachedRocket> localRockets;
-    Matrix4x4 vm; Vector3 lPos, ccip; float bVel; int lTeam;
+    Matrix4x4 vm, vmAlt; Vector3 lPos, localUnitPos, ccip; float bVel; int lTeam;
 
     {
         std::lock_guard<std::mutex> lock(shared::DataMutex);
         localEntities = shared::Entities;
         localRockets = shared::Rockets; // Get synced missiles
-        vm = shared::ViewMatrix; lPos = shared::LocalPos;
+        vm = shared::ViewMatrix;
+        vmAlt = shared::ViewMatrixAlt;
+        lPos = shared::LocalPos;
+        localUnitPos = shared::LocalUnitPos;
         ccip = shared::CCIPPos; bVel = shared::LiveVelocity; lTeam = shared::LocalTeam;
     }
+
+    const bool hasLocalUnit = IsSaneUnitPosition(localUnitPos);
 
     // maws system
     if (settings::bMissileESP) {
@@ -119,27 +162,49 @@ void RenderESP(ImDrawList* draw) {
     ImVec2 bestTarget = { 0,0 }; float minDist = settings::aimFov;
 
     for (const auto& ent : localEntities) {
-        if (settings::bAutoTeam) { if (ent.team == lTeam) continue; }
-        else { if (ent.team == settings::ManualTeam) continue; }
+        if (settings::bAutoTeam) {
+            if (lTeam > 0 && ent.team == lTeam) continue;
+        }
+        else if (ent.team == settings::ManualTeam) {
+            continue;
+        }
+
+        ImVec2 screenPos;
+        if (!ProjectToScreen(ent.position, screenPos, vm, vmAlt)) continue;
 
         CachedEntity drawEnt = ent;
         drawEnt.position = PredictEntityPos(ent);
 
-        ImVec2 screenPos;
-        if (!WorldToScreen(drawEnt.position, screenPos, vm)) continue;
-
-        float clipW = drawEnt.position.x * vm.m[3] + drawEnt.position.y * vm.m[7] + drawEnt.position.z * vm.m[11] + vm.m[15];
-        if (clipW < 0.0f) clipW = 0.0f;
-        const float distMeters = drawEnt.position.Distance(lPos);
+        float distMeters = 0.0f;
+        if (hasLocalUnit) {
+            distMeters = CalcHorizontalRange(ent.position, localUnitPos);
+        }
+        const float clipW = ent.position.x * vm.m[3] + ent.position.y * vm.m[7]
+            + ent.position.z * vm.m[11] + vm.m[15];
+        if (distMeters <= 0.5f && clipW > 0.5f && std::isfinite(clipW)) {
+            distMeters = clipW;
+        }
 
         ImU32 boxColor = ImGui::ColorConvertFloat4ToU32(*(ImVec4*)settings::col_BoxVis);
 
         Vector3 c[8] = { {ent.bbMin.x, ent.bbMin.y, ent.bbMin.z}, {ent.bbMax.x, ent.bbMin.y, ent.bbMin.z}, {ent.bbMax.x, ent.bbMax.y, ent.bbMin.z}, {ent.bbMin.x, ent.bbMax.y, ent.bbMin.z}, {ent.bbMin.x, ent.bbMin.y, ent.bbMax.z}, {ent.bbMax.x, ent.bbMin.y, ent.bbMax.z}, {ent.bbMax.x, ent.bbMax.y, ent.bbMax.z}, {ent.bbMin.x, ent.bbMax.y, ent.bbMax.z} };
-        ImVec2 s[8]; bool validBox = true; float mix = 10000, max = -10000, miy = 10000, may = -10000;
+        ImVec2 s[8] = {};
+        int visibleCorners = 0;
+        float mix = 10000.0f, max = -10000.0f, miy = 10000.0f, may = -10000.0f;
         for (int k = 0; k < 8; k++) {
-            if (!WorldToScreen(TransformVec(c[k], drawEnt.rotation, drawEnt.position), s[k], vm)) { validBox = false; break; }
+            if (!ProjectToScreen(TransformVec(c[k], drawEnt.rotation, drawEnt.position), s[k], vm, vmAlt)) continue;
+            visibleCorners++;
             if (s[k].x < mix) mix = s[k].x; if (s[k].x > max) max = s[k].x;
             if (s[k].y < miy) miy = s[k].y; if (s[k].y > may) may = s[k].y;
+        }
+
+        const bool validBox = visibleCorners > 0 && max > mix && may > miy;
+        if (!validBox) {
+            const float fallback = 18.0f;
+            mix = screenPos.x - fallback;
+            max = screenPos.x + fallback;
+            miy = screenPos.y - fallback;
+            may = screenPos.y + fallback;
         }
 
         if (settings::bDangerWarning && IsAimingAtMe(drawEnt.position, lPos, drawEnt.rotation)) {
@@ -148,8 +213,7 @@ void RenderESP(ImDrawList* draw) {
             if (WorldToScreen(drawEnt.position, es, vm)) draw->AddLine(cent, es, ImColor(255, 0, 0, 150), 2.0f);
         }
 
-        if (settings::bEsp && validBox) {
-
+        if (settings::bEsp) {
             if (settings::bInternalsESP && !ent.internals.empty()) {
                 for (const auto& part : ent.internals) {
                     ImU32 partCol = ImColor(255, 255, 255, 240);
@@ -274,8 +338,11 @@ void RenderESP(ImDrawList* draw) {
                 draw->AddRect(ImVec2(mix - 1, miy - 1), ImVec2(max + 1, may + 1), ImColor(0, 0, 0), 0, 0, 3.0f);
                 draw->AddRect(ImVec2(mix, miy), ImVec2(max, may), boxColor);
             }
+            else {
+                draw->AddCircle(screenPos, 6.0f, boxColor, 12, 2.0f);
+            }
 
-            if (settings::bBox3D) {
+            if (settings::bBox3D && visibleCorners == 8) {
                 draw->AddLine(s[0], s[1], boxColor); draw->AddLine(s[1], s[2], boxColor);
                 draw->AddLine(s[2], s[3], boxColor); draw->AddLine(s[3], s[0], boxColor);
                 draw->AddLine(s[4], s[5], boxColor); draw->AddLine(s[5], s[6], boxColor);
@@ -284,10 +351,17 @@ void RenderESP(ImDrawList* draw) {
                 draw->AddLine(s[2], s[6], boxColor); draw->AddLine(s[3], s[7], boxColor);
             }
 
-            if (settings::bDistance) {
+            if (settings::bDistance && distMeters > 0.5f) {
                 char dbuf[32];
-                _snprintf_s(dbuf, _TRUNCATE, "%.0fm", distMeters);
-                draw->AddText(ImVec2(mix, may + 2), ImColor(255, 255, 255), dbuf);
+                if (distMeters >= 1000.0f) {
+                    _snprintf_s(dbuf, _TRUNCATE, "%.1fkm", distMeters / 1000.0f);
+                }
+                else {
+                    _snprintf_s(dbuf, _TRUNCATE, "%.0fm", distMeters);
+                }
+                const ImVec2 textSize = ImGui::CalcTextSize(dbuf);
+                const float textX = ((mix + max) * 0.5f) - (textSize.x * 0.5f);
+                draw->AddText(ImVec2(textX, may + 2.0f), ImColor(255, 255, 255), dbuf);
             }
             if (settings::bName) draw->AddText(ImVec2(mix, miy - 15), ImColor(200, 200, 200), ent.name.c_str());
 
@@ -304,7 +378,8 @@ void RenderESP(ImDrawList* draw) {
         Vector3 targetWeak = { (ent.bbMin.x + ent.bbMax.x) / 2.0f, ent.bbMin.y + (h * settings::targetHeightRatio), (ent.bbMin.z + ent.bbMax.z) / 2.0f };
         Vector3 tReal = TransformVec(targetWeak, drawEnt.rotation, drawEnt.position);
 
-        float fTime = bVel > 10.0f ? clipW / bVel : 0.0f;
+        const float rangeForPrediction = (clipW > 0.1f) ? clipW : distMeters;
+        float fTime = bVel > 10.0f ? rangeForPrediction / bVel : 0.0f;
 
         if (settings::bPrediction || settings::bAirLead) {
             tReal = tReal + (ent.velocity * fTime);
@@ -315,7 +390,7 @@ void RenderESP(ImDrawList* draw) {
         }
 
         ImVec2 ps;
-        if (WorldToScreen(tReal, ps, vm)) {
+        if (ProjectToScreen(tReal, ps, vm, vmAlt)) {
             if (settings::bEsp) {
                 if (ent.isAir) {
                     draw->AddCircle(ps, 8.0f, ImColor(219, 44, 44, 255), 12, 2.0f);
@@ -331,7 +406,7 @@ void RenderESP(ImDrawList* draw) {
     }
 
     if (settings::bShowFovCircle) {
-        ImGui::GetBackgroundDrawList()->AddCircle(ImVec2((float)ScreenWidth / 2.0f, (float)ScreenHeight / 2.0f), settings::aimFov, ImGui::ColorConvertFloat4ToU32(*(ImVec4*)settings::col_Fov), 64, 1.0f);
+        draw->AddCircle(ImVec2((float)ScreenWidth / 2.0f, (float)ScreenHeight / 2.0f), settings::aimFov, ImGui::ColorConvertFloat4ToU32(*(ImVec4*)settings::col_Fov), 64, 1.0f);
     }
 
     if (settings::bMemoryAim && bestTarget.x != 0 && (GetAsyncKeyState(settings::aimKey) & 0x8000)) {

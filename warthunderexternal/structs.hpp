@@ -70,7 +70,9 @@ namespace shared {
     extern std::vector<CachedEntity> Entities;
     extern std::vector<CachedRocket> Rockets; 
     extern Matrix4x4 ViewMatrix;
+    extern Matrix4x4 ViewMatrixAlt;
     extern Vector3 LocalPos;
+    extern Vector3 LocalUnitPos;
     extern Vector3 NativePredictionPos;
     extern Vector3 CCIPPos;
     extern float LiveVelocity;
@@ -80,6 +82,8 @@ namespace shared {
     extern std::atomic<uint64_t> viewGeneration;
     extern std::atomic<uint64_t> entityGeneration;
     extern std::atomic<uint64_t> entityCacheTick;
+    extern std::atomic<uint32_t> cachedEntityCount;
+    extern std::atomic<uint32_t> rawUnitCount;
 }
 
 namespace perf {

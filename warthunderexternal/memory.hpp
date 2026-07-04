@@ -35,6 +35,7 @@ public:
     bool UpdateOffsets();
     bool DetectGameResolution();
     bool UpdateGameWindow();
+    uintptr_t ResolveCGamePtr() const;
 };
 
 void ResizeOverlayRenderTargets(int width, int height);

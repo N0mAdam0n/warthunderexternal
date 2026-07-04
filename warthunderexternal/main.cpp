@@ -37,7 +37,9 @@ namespace shared {
     std::vector<CachedEntity> Entities;
     std::vector<CachedRocket> Rockets;
     Matrix4x4 ViewMatrix;
+    Matrix4x4 ViewMatrixAlt;
     Vector3 LocalPos;
+    Vector3 LocalUnitPos;
     Vector3 NativePredictionPos;
     Vector3 CCIPPos;
     float LiveVelocity;
@@ -47,6 +49,8 @@ namespace shared {
     std::atomic<uint64_t> viewGeneration(0);
     std::atomic<uint64_t> entityGeneration(0);
     std::atomic<uint64_t> entityCacheTick(0);
+    std::atomic<uint32_t> cachedEntityCount(0);
+    std::atomic<uint32_t> rawUnitCount(0);
 }
 
 namespace perf {
@@ -185,8 +189,9 @@ void RenderNotifications(ImDrawList* draw) {
 void DrawWatermark(ImDrawList* draw) {
     time_t raw; struct tm info; char buf[80]; time(&raw); localtime_s(&info, &raw); strftime(buf, sizeof(buf), "%H:%M:%S", &info);
     char text[256];
-    _snprintf_s(text, _TRUNCATE, "JANG DMA (WT) | Draw: %u | View: %u | Data: %u | Cache: %ums | %s",
-        perf::drawFps.load(), perf::viewFps.load(), perf::entityFps.load(), perf::cacheMs.load(), buf);
+    _snprintf_s(text, _TRUNCATE, "JANG DMA (WT) | Draw: %u | View: %u | Data: %u | Ent: %u/%u | Cache: %ums | %s",
+        perf::drawFps.load(), perf::viewFps.load(), perf::entityFps.load(),
+        shared::cachedEntityCount.load(), shared::rawUnitCount.load(), perf::cacheMs.load(), buf);
     ImVec2 pos(20, 20); ImVec2 tSize = ImGui::CalcTextSize(text); ImVec2 pad(12, 6);
     ImVec2 bSize(tSize.x + pad.x * 2, tSize.y + pad.y * 2);
     draw->AddRectFilled(pos, ImVec2(pos.x + bSize.x, pos.y + bSize.y), ImColor(15, 15, 15, 200), 4.0f);

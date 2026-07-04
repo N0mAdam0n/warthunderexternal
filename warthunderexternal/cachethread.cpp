@@ -14,7 +14,9 @@ namespace shared {
     extern std::vector<CachedEntity> Entities;
     extern std::vector<CachedRocket> Rockets;
     extern Matrix4x4 ViewMatrix;
+    extern Matrix4x4 ViewMatrixAlt;
     extern Vector3 LocalPos;
+    extern Vector3 LocalUnitPos;
     extern Vector3 NativePredictionPos;
     extern Vector3 CCIPPos;
     extern float LiveVelocity;
@@ -44,8 +46,15 @@ struct WTVertex {
     uint32_t pad;
 };
 
+static bool IsSaneUnitPosition(const Vector3& pos) {
+    return !std::isnan(pos.x) && !std::isnan(pos.y) && !std::isnan(pos.z)
+        && !std::isinf(pos.x) && !std::isinf(pos.y) && !std::isinf(pos.z)
+        && (std::fabs(pos.x) > 0.01f || std::fabs(pos.y) > 0.01f || std::fabs(pos.z) > 0.01f);
+}
+
 void FastViewThread() {
     float bulletVelocity = 800.0f;
+    Vector3 lastLocalUnitPos = { 0, 0, 0 };
 
     while (true) {
         if (!mem.BaseAddress) {
@@ -53,21 +62,19 @@ void FastViewThread() {
             continue;
         }
 
-        uintptr_t cGame = mem.Read<uintptr_t>(mem.BaseAddress + offsets::cgame_offset);
+        const uintptr_t cGame = mem.ResolveCGamePtr();
         if (!mem.IsValidPtr(cGame)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
             continue;
         }
 
+        const Matrix4x4 viewAlt = mem.Read<Matrix4x4>(mem.BaseAddress + offsets::view_matrix_offset);
         uintptr_t camPtr = mem.Read<uintptr_t>(cGame + offsets::cgame::camera);
         Matrix4x4 viewM = mem.IsValidPtr(camPtr)
             ? mem.Read<Matrix4x4>(camPtr + offsets::camera::matrix)
-            : mem.Read<Matrix4x4>(mem.BaseAddress + offsets::view_matrix_offset);
+            : viewAlt;
 
-        Vector3 localPos = { 0, 0, 0 };
-        if (mem.IsValidPtr(camPtr)) {
-            localPos = mem.Read<Vector3>(camPtr + offsets::camera::matrix + 0x30);
-        }
+        Vector3 localUnitPos = lastLocalUnitPos;
 
         Vector3 ccip = { 0, 0, 0 };
         uintptr_t ballisticsPtr = mem.Read<uintptr_t>(cGame + offsets::cgame::ballistics);
@@ -82,8 +89,9 @@ void FastViewThread() {
             uintptr_t localUnit = mem.Read<uintptr_t>(localMgr + offsets::localplayer::localunit_offset);
             if (mem.IsValidPtr(localUnit)) {
                 Vector3 unitPos = mem.Read<Vector3>(localUnit + offsets::unit::position_offset);
-                if (!std::isnan(unitPos.x) && !std::isinf(unitPos.x) && !std::isnan(unitPos.z) && !std::isinf(unitPos.z)) {
-                    localPos = unitPos;
+                if (IsSaneUnitPosition(unitPos)) {
+                    localUnitPos = unitPos;
+                    lastLocalUnitPos = unitPos;
                 }
             }
         }
@@ -91,7 +99,11 @@ void FastViewThread() {
         {
             std::lock_guard<std::mutex> lock(shared::DataMutex);
             shared::ViewMatrix = viewM;
-            shared::LocalPos = localPos;
+            shared::ViewMatrixAlt = viewAlt;
+            if (IsSaneUnitPosition(localUnitPos)) {
+                shared::LocalPos = localUnitPos;
+                shared::LocalUnitPos = localUnitPos;
+            }
             shared::LiveVelocity = bulletVelocity;
             shared::CCIPPos = ccip;
         }
@@ -110,7 +122,7 @@ void CacheThread() {
 
         if (!mem.BaseAddress) { std::this_thread::sleep_for(std::chrono::milliseconds(500)); continue; }
 
-        uintptr_t cGame = mem.Read<uintptr_t>(mem.BaseAddress + offsets::cgame_offset);
+        const uintptr_t cGame = mem.ResolveCGamePtr();
         if (!mem.IsValidPtr(cGame)) { std::this_thread::sleep_for(std::chrono::milliseconds(100)); continue; }
 
         if (settings::bEnableMemoryWrites) {
@@ -130,9 +142,12 @@ void CacheThread() {
         uintptr_t localMgr = mem.Read<uintptr_t>(mem.BaseAddress + offsets::localplayer_offset);
         if (mem.IsValidPtr(localMgr)) {
             if (!settings::bMindControlActive || cachedRealLocalUnit == 0) {
-                uintptr_t tempUnit = mem.Read<uintptr_t>(localMgr + offsets::localplayer::localunit_offset);
+                const uintptr_t tempUnit = mem.Read<uintptr_t>(localMgr + offsets::localplayer::localunit_offset);
                 if (mem.IsValidPtr(tempUnit)) {
                     cachedRealLocalUnit = tempUnit;
+                }
+                else {
+                    cachedRealLocalUnit = 0;
                 }
             }
         }
@@ -140,12 +155,14 @@ void CacheThread() {
             cachedRealLocalUnit = 0;
         }
 
-        Vector3 trueLocalPos = { 0, 0, 0 };
+        static Vector3 lastCachedLocalPos = { 0, 0, 0 };
+        Vector3 trueLocalPos = lastCachedLocalPos;
         Vector3 trueLocalVel = { 0,0,0 };
         if (mem.IsValidPtr(cachedRealLocalUnit)) {
             Vector3 unitPos = mem.Read<Vector3>(cachedRealLocalUnit + offsets::unit::position_offset);
-            if (!std::isnan(unitPos.x) && !std::isinf(unitPos.x) && !std::isnan(unitPos.z) && !std::isinf(unitPos.z)) {
+            if (IsSaneUnitPosition(unitPos)) {
                 trueLocalPos = unitPos;
+                lastCachedLocalPos = unitPos;
 
                 uintptr_t lAirMov = mem.Read<uintptr_t>(cachedRealLocalUnit + offsets::unit::airmovement_offset);
                 if (mem.IsValidPtr(lAirMov)) {
@@ -153,13 +170,12 @@ void CacheThread() {
                     if (!std::isnan(aVel.x) && aVel.Length() < 2000.0f) trueLocalVel = aVel;
                 }
             }
-            else { cachedRealLocalUnit = 0; }
         }
-        else { cachedRealLocalUnit = 0; }
 
         int count = mem.Read<int>(cGame + offsets::cgame::unitcount);
         if (count < 0) count = 0;
         if (count > 4096) count = 4096;
+        shared::rawUnitCount.store(static_cast<uint32_t>(count), std::memory_order_relaxed);
 
         uintptr_t unitList = mem.Read<uintptr_t>(cGame + offsets::cgame::unitlist);
         std::vector<uintptr_t> ptrs(count);
@@ -170,13 +186,17 @@ void CacheThread() {
 
         std::vector<CachedEntity> tempCache;
         int lTeam = -1;
+        if (mem.IsValidPtr(cachedRealLocalUnit)) {
+            const uint8_t localTeam = mem.Read<uint8_t>(cachedRealLocalUnit + offsets::unit::unitArmyNo_offset);
+            if (localTeam != 0) lTeam = localTeam;
+        }
 
         for (int i = 0; i < count; i++) {
             uintptr_t ptr = ptrs[i];
             if (!mem.IsValidPtr(ptr)) continue;
 
             short state = mem.Read<short>(ptr + offsets::unit::unitState_offset);
-            if (state != 0) continue;
+            if (state < 0 || state > 3) continue;
 
             Vector3 pos = mem.Read<Vector3>(ptr + offsets::unit::position_offset);
 
@@ -186,8 +206,12 @@ void CacheThread() {
             uint8_t team = mem.Read<uint8_t>(ptr + offsets::unit::unitArmyNo_offset);
             if (team == 0) continue;
 
-            if (ptr == cachedRealLocalUnit) {
+            if (cachedRealLocalUnit != 0 && ptr == cachedRealLocalUnit) {
                 lTeam = team;
+                if (IsSaneUnitPosition(pos)) {
+                    trueLocalPos = pos;
+                    lastCachedLocalPos = pos;
+                }
                 continue;
             }
 
@@ -409,10 +433,14 @@ void CacheThread() {
         {
             std::lock_guard<std::mutex> lock(shared::DataMutex);
             shared::LocalTeam = lTeam;
+            if (IsSaneUnitPosition(trueLocalPos)) {
+                shared::LocalUnitPos = trueLocalPos;
+            }
             shared::Entities = std::move(tempCache);
             shared::Rockets = std::move(tempRockets);
             shared::entityCacheTick.store(GetTickCount64(), std::memory_order_relaxed);
         }
+        shared::cachedEntityCount.store(static_cast<uint32_t>(tempCache.size()), std::memory_order_relaxed);
         shared::entityGeneration.fetch_add(1, std::memory_order_relaxed);
 
         const auto iterationEnd = std::chrono::steady_clock::now();

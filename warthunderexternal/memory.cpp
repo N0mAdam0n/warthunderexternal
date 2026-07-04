@@ -130,6 +130,24 @@ bool Memory::DetectGameResolution() {
     return detectedW > 0 && detectedH > 0;
 }
 
+uintptr_t Memory::ResolveCGamePtr() const {
+    if (!BaseAddress) return 0;
+
+    auto hasPlausibleUnitCount = [this](uintptr_t cgame) -> bool {
+        if (!IsValidPtr(cgame)) return false;
+        const int count = Read<int>(cgame + offsets::cgame::unitcount);
+        return count >= 0 && count <= 4096;
+    };
+
+    const uintptr_t indirect = Read<uintptr_t>(BaseAddress + offsets::cgame_offset);
+    if (hasPlausibleUnitCount(indirect)) return indirect;
+
+    const uintptr_t direct = BaseAddress + offsets::cgame_offset;
+    if (hasPlausibleUnitCount(direct)) return direct;
+
+    return IsValidPtr(indirect) ? indirect : 0;
+}
+
 bool Memory::UpdateGameWindow() {
     static uint64_t lastResolutionCheck = 0;
     const uint64_t now = GetTickCount64();

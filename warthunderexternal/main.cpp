@@ -445,10 +445,21 @@ int main() {
                 if (p.y < 0 || p.alpha <= 0.0f) { p.x = (float)(rand() % ScreenWidth); p.y = (float)ScreenHeight; p.dx = ((rand() % 100) - 50) / 200.0f; p.alpha = 1.0f; }
                 float ca = p.alpha * menuAlpha; bg->AddCircleFilled(ImVec2(p.x, p.y), p.size, ImColor(219, 44, 44, (int)(ca * 180))); UI::DrawGlow(bg, ImVec2(p.x, p.y), ImVec2(p.x, p.y), ImColor(219, 44, 44, (int)(ca * 50)), p.size * 2.0f, 5.0f);
             }
+            static ImVec2 menuPos(12.0f, 12.0f);
             ImGui::SetNextWindowSize(ImVec2(850, 500));
-            ImGui::SetNextWindowPos(ImVec2(((float)ScreenWidth - 850.0f) * 0.5f, ((float)ScreenHeight - 500.0f) * 0.5f), ImGuiCond_Always);
-            ImGui::Begin("JANG_WT", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove);
-            ImVec2 p = ImGui::GetWindowPos(); ImVec2 s = ImGui::GetWindowSize(); ImDrawList* draw = ImGui::GetWindowDrawList();
+            ImGui::SetNextWindowPos(menuPos, ImGuiCond_Always);
+            ImGui::Begin("JANG_WT", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoSavedSettings);
+            ImVec2 s = ImGui::GetWindowSize();
+            ImGui::SetCursorPos(ImVec2(0, 0));
+            ImGui::InvisibleButton("##MenuDrag", ImVec2(s.x, 40));
+            if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+                menuPos.x += ImGui::GetIO().MouseDelta.x;
+                menuPos.y += ImGui::GetIO().MouseDelta.y;
+            }
+            else {
+                menuPos = ImGui::GetWindowPos();
+            }
+            ImVec2 p = ImGui::GetWindowPos(); ImDrawList* draw = ImGui::GetWindowDrawList();
             UI::DrawGlow(draw, p, ImVec2(p.x + s.x, p.y + s.y), ImColor(219, 44, 44, (int)(255 * menuAlpha)), 12.0f, 20.0f);
             draw->AddRectFilled(p, ImVec2(p.x + s.x, p.y + s.y), ImColor(17, 17, 21, (int)(255 * menuAlpha)), 12.0f);
             draw->AddRectFilled(p, ImVec2(p.x + 180, p.y + s.y), ImColor(12, 12, 15, (int)(255 * menuAlpha)), 12.0f, ImDrawFlags_RoundCornersLeft);

@@ -4,10 +4,6 @@
 namespace settings {
     extern std::string dmaFolder;
     extern std::string dmaDevice;
-    extern std::string captureWindowTitle;
-    extern std::string overlayAlignMode;
-    extern bool overlayUseClientRect;
-    extern bool overlayAutoCapture;
     extern int overlayX;
     extern int overlayY;
     extern int overlayWidth;

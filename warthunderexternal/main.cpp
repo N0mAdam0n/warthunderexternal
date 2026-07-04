@@ -310,9 +310,10 @@ bool InitOverlay() {
     ImGui_ImplWin32_Init(g_hwndOverlay);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
     SetupStyle();
-    ShowWindow(g_hwndOverlay, SW_SHOW);
+    SetWindowPos(g_hwndOverlay, HWND_TOPMOST, mem.LastRect.left, mem.LastRect.top, ScreenWidth, ScreenHeight, SWP_SHOWWINDOW);
     UpdateWindow(g_hwndOverlay);
     SetForegroundWindow(g_hwndOverlay);
+    BringWindowToTop(g_hwndOverlay);
 
     for (int i = 0; i < 50; i++) {
         g_Particles.push_back({
@@ -365,32 +366,17 @@ int main() {
         std::cout << "[!] Using built-in offset defaults." << std::endl;
     }
 
-    std::cout << "[>] Overlay align mode: " << settings::overlayAlignMode << std::endl;
-    if (settings::overlayAlignMode != "manual") {
-        if (!settings::captureWindowTitle.empty()) {
-            std::cout << " [>] Looking for capture window: " << settings::captureWindowTitle << std::endl;
-        }
-        else if (settings::overlayAutoCapture) {
-            std::cout << " [>] Auto-detecting capture preview window (OBS/PotPlayer/etc.)" << std::endl;
-        }
-    }
-
     if (!InitOverlay()) {
         std::cout << "[!] Overlay initialization failed." << std::endl;
         return 1;
     }
-    std::cout << " [+] Overlay " << ScreenWidth << "x" << ScreenHeight
-        << " @ (" << mem.LastRect.left << "," << mem.LastRect.top << ")"
-        << " source=" << mem.overlayAlignSource << std::endl;
-    if (mem.GameHwnd == NULL && settings::overlayAlignMode != "manual") {
-        std::cout << "[!] Capture window not found. Set capture_window in dma_config.ini to your preview window title." << std::endl;
-        LogVisibleCaptureCandidates();
-    }
+    std::cout << " [+] DMA overlay ready: " << ScreenWidth << "x" << ScreenHeight
+        << " @ (" << mem.LastRect.left << "," << mem.LastRect.top << ")" << std::endl;
 
     std::thread(FastViewThread).detach();
     std::thread(CacheThread).detach();
 
-    float menuAlpha = 0.0f; int activeTab = 0;
+    float menuAlpha = 1.0f; int activeTab = 0;
     LONG exStyle = GetWindowLong(g_hwndOverlay, GWL_EXSTYLE);
     bool isClickThrough = !bShowMenu;
     uint64_t lastSeenViewGen = 0;
@@ -457,7 +443,8 @@ int main() {
                 float ca = p.alpha * menuAlpha; bg->AddCircleFilled(ImVec2(p.x, p.y), p.size, ImColor(219, 44, 44, (int)(ca * 180))); UI::DrawGlow(bg, ImVec2(p.x, p.y), ImVec2(p.x, p.y), ImColor(219, 44, 44, (int)(ca * 50)), p.size * 2.0f, 5.0f);
             }
             ImGui::SetNextWindowSize(ImVec2(850, 500));
-            ImGui::Begin("JANG_WT", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoSavedSettings);
+            ImGui::SetNextWindowPos(ImVec2(((float)ScreenWidth - 850.0f) * 0.5f, ((float)ScreenHeight - 500.0f) * 0.5f), ImGuiCond_Always);
+            ImGui::Begin("JANG_WT", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoMove);
             ImVec2 p = ImGui::GetWindowPos(); ImVec2 s = ImGui::GetWindowSize(); ImDrawList* draw = ImGui::GetWindowDrawList();
             UI::DrawGlow(draw, p, ImVec2(p.x + s.x, p.y + s.y), ImColor(219, 44, 44, (int)(255 * menuAlpha)), 12.0f, 20.0f);
             draw->AddRectFilled(p, ImVec2(p.x + s.x, p.y + s.y), ImColor(17, 17, 21, (int)(255 * menuAlpha)), 12.0f);
@@ -490,14 +477,8 @@ int main() {
                     ImGui::Text("Target PID: %lu", mem.ProcessID);
                     ImGui::Text("Base: 0x%llX", (unsigned long long)mem.BaseAddress);
                     ImGui::Text("Overlay: %dx%d @ (%d,%d)", ScreenWidth, ScreenHeight, mem.LastRect.left, mem.LastRect.top);
-                    ImGui::Text("Align: %s", mem.overlayAlignSource.c_str());
                     ImGui::Text("Draw FPS: %u | View: %u | Data: %u | Loop: %u | Cache: %ums",
                         perf::drawFps.load(), perf::viewFps.load(), perf::entityFps.load(), perf::loopFps.load(), perf::cacheMs.load());
-                    if (mem.GameHwnd) {
-                        char title[128] = {};
-                        GetWindowTextA(mem.GameHwnd, title, sizeof(title));
-                        ImGui::Text("Target: %s", title);
-                    }
                     ImGui::Text("Kmbox: %s", Input::IsReady() ? "Connected" : (settings::bUseKmbox ? "Failed" : "Disabled"));
                     if (!offsets::api_version.empty()) ImGui::Text("Offsets: v%s", offsets::api_version.c_str());
                 }
@@ -621,8 +602,8 @@ int main() {
                 }
                 else if (activeTab == 4) {
                     ImGui::BeginChild("Cfg", ImVec2(0, 0), true); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "SYSTEM & CONFIG"); ImGui::Separator();
-                    ImGui::TextDisabled("Edit dma_config.ini and restart to apply DMA/Kmbox settings.");
-                    ImGui::Text("Capture Window: %s", settings::captureWindowTitle.empty() ? "(fullscreen)" : settings::captureWindowTitle.c_str());
+                    ImGui::TextDisabled("Edit dma_config.ini and restart to apply DMA/Kmbox/overlay settings.");
+                    ImGui::Text("Overlay: %dx%d @ (%d,%d)", ScreenWidth, ScreenHeight, settings::overlayX, settings::overlayY);
                     ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
                     UI::Toggle("Auto Team Detect", &settings::bAutoTeam); if (!settings::bAutoTeam) { ImGui::Indent(15.0f); ImGui::SliderInt("Manual ID", &settings::ManualTeam, 0, 4); ImGui::Unindent(15.0f); }
                     ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();

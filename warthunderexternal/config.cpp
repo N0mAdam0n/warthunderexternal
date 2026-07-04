@@ -6,10 +6,6 @@
 namespace settings {
     std::string dmaFolder = "dma";
     std::string dmaDevice = "fpga";
-    std::string captureWindowTitle;
-    std::string overlayAlignMode = "capture";
-    bool overlayUseClientRect = true;
-    bool overlayAutoCapture = true;
     int overlayX = 0;
     int overlayY = 0;
     int overlayWidth = 0;
@@ -44,11 +40,7 @@ static void ApplyConfigValue(const std::string& section, const std::string& key,
     }
 
     if (section == "overlay") {
-        if (key == "capture_window") settings::captureWindowTitle = value;
-        else if (key == "align" && !value.empty()) settings::overlayAlignMode = value;
-        else if (key == "use_client_rect") settings::overlayUseClientRect = (value == "1" || value == "true" || value == "yes");
-        else if (key == "auto_capture") settings::overlayAutoCapture = (value == "1" || value == "true" || value == "yes");
-        else if (key == "overlay_x" && !value.empty()) settings::overlayX = std::stoi(value);
+        if (key == "overlay_x" && !value.empty()) settings::overlayX = std::stoi(value);
         else if (key == "overlay_y" && !value.empty()) settings::overlayY = std::stoi(value);
         else if (key == "overlay_width" && !value.empty()) settings::overlayWidth = std::stoi(value);
         else if (key == "overlay_height" && !value.empty()) settings::overlayHeight = std::stoi(value);

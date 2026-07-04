@@ -14,7 +14,6 @@ class Memory {
 public:
     DWORD ProcessID = 0;
     uintptr_t BaseAddress = 0;
-    HWND GameHwnd = NULL;
 
     RECT LastRect = { 0 };
     bool LastMenuState = false;
@@ -32,12 +31,9 @@ public:
     bool Attach(const std::string& procName);
     bool UpdateOffsets();
     bool UpdateGameWindow();
-
-    std::string overlayAlignSource;
 };
 
 void ResizeOverlayRenderTargets(int width, int height);
-void LogVisibleCaptureCandidates();
 
 extern Memory mem;
 

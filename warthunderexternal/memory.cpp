@@ -250,14 +250,18 @@ bool Memory::UpdateGameWindow() {
         GameHwnd = NULL;
     }
 
+    if (targetW < 100) targetW = GetSystemMetrics(SM_CXSCREEN);
+    if (targetH < 100) targetH = GetSystemMetrics(SM_CYSCREEN);
+
     const int prevW = ScreenWidth;
     const int prevH = ScreenHeight;
-    ScreenWidth = targetW;
-    ScreenHeight = targetH;
 
     const bool boundsChanged =
         targetX != LastRect.left || targetY != LastRect.top ||
         targetW != (LastRect.right - LastRect.left) || targetH != (LastRect.bottom - LastRect.top);
+
+    ScreenWidth = targetW;
+    ScreenHeight = targetH;
 
     LastRect.left = targetX;
     LastRect.top = targetY;
@@ -265,7 +269,8 @@ bool Memory::UpdateGameWindow() {
     LastRect.bottom = targetY + targetH;
 
     if (g_hwndOverlay && (boundsChanged || bShowMenu != LastMenuState)) {
-        UINT flags = SWP_NOACTIVATE | SWP_SHOWWINDOW;
+        UINT flags = SWP_SHOWWINDOW;
+        if (!bShowMenu) flags |= SWP_NOACTIVATE;
         HWND insertAfter = bShowMenu ? HWND_NOTOPMOST : HWND_TOPMOST;
         SetWindowPos(g_hwndOverlay, insertAfter, targetX, targetY, targetW, targetH, flags);
         LastMenuState = bShowMenu;

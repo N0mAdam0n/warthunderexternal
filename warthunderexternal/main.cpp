@@ -242,23 +242,86 @@ void SetupStyle() {
     else io.Fonts->AddFontDefault();
 }
 
-void InitOverlay() {
-    mem.UpdateGameWindow();
+static bool EnsureOverlayDimensions() {
+    if (ScreenWidth < 100 || ScreenHeight < 100) {
+        ScreenWidth = GetSystemMetrics(SM_CXSCREEN);
+        ScreenHeight = GetSystemMetrics(SM_CYSCREEN);
+    }
+    return ScreenWidth >= 100 && ScreenHeight >= 100;
+}
 
-    WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(NULL), NULL, NULL, NULL, NULL, L"SaturnClass", NULL }; RegisterClassExW(&wc);
+bool InitOverlay() {
+    mem.UpdateGameWindow();
+    if (!EnsureOverlayDimensions()) {
+        std::cout << "[!] Invalid overlay size." << std::endl;
+        return false;
+    }
+
+    WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(NULL), NULL, NULL, NULL, NULL, L"SaturnClass", NULL };
+    RegisterClassExW(&wc);
     g_hwndOverlay = CreateWindowExW(
-        WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW,
         L"SaturnClass", L"SaturnOverlay", WS_POPUP,
         mem.LastRect.left, mem.LastRect.top, ScreenWidth, ScreenHeight,
         NULL, NULL, wc.hInstance, NULL);
+    if (!g_hwndOverlay) {
+        std::cout << "[!] Failed to create overlay window. Error=" << GetLastError() << std::endl;
+        return false;
+    }
 
     MARGINS margins = { -1, -1, -1, -1 };
     DwmExtendFrameIntoClientArea(g_hwndOverlay, &margins);
-    DXGI_SWAP_CHAIN_DESC sd = { 0 }; sd.BufferCount = 2; sd.BufferDesc.Width = ScreenWidth; sd.BufferDesc.Height = ScreenHeight; sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM; sd.BufferDesc.RefreshRate.Numerator = 60; sd.BufferDesc.RefreshRate.Denominator = 1; sd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH; sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT; sd.OutputWindow = g_hwndOverlay; sd.SampleDesc.Count = 1; sd.Windowed = TRUE; sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
-    D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, NULL, 0, D3D11_SDK_VERSION, &sd, &g_pSwapChain, &g_pd3dDevice, NULL, &g_pd3dDeviceContext);
-    ID3D11Texture2D* pBackBuffer = nullptr; HRESULT hr = g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer)); if (SUCCEEDED(hr) && pBackBuffer) { g_pd3dDevice->CreateRenderTargetView(pBackBuffer, NULL, &g_mainRenderTargetView); pBackBuffer->Release(); }
-    ImGui::CreateContext(); ImGui::StyleColorsDark(); ImGui_ImplWin32_Init(g_hwndOverlay); ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext); SetupStyle(); ShowWindow(g_hwndOverlay, SW_SHOW);
-    for (int i = 0; i < 50; i++) g_Particles.push_back({ (float)(rand() % ScreenWidth), (float)(rand() % ScreenHeight), ((rand() % 100) - 50) / 200.0f, 0, (float)(rand() % 2 + 1), (float)(rand() % 100) / 100.0f });
+
+    DXGI_SWAP_CHAIN_DESC sd = {};
+    sd.BufferCount = 2;
+    sd.BufferDesc.Width = ScreenWidth;
+    sd.BufferDesc.Height = ScreenHeight;
+    sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+    sd.BufferDesc.RefreshRate.Numerator = 60;
+    sd.BufferDesc.RefreshRate.Denominator = 1;
+    sd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
+    sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+    sd.OutputWindow = g_hwndOverlay;
+    sd.SampleDesc.Count = 1;
+    sd.Windowed = TRUE;
+    sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+
+    HRESULT hr = D3D11CreateDeviceAndSwapChain(
+        NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, 0, NULL, 0,
+        D3D11_SDK_VERSION, &sd, &g_pSwapChain, &g_pd3dDevice, NULL, &g_pd3dDeviceContext);
+    if (FAILED(hr) || !g_pSwapChain || !g_pd3dDevice || !g_pd3dDeviceContext) {
+        std::cout << "[!] D3D11 overlay init failed. HRESULT=0x" << std::hex << hr << std::dec << std::endl;
+        DestroyWindow(g_hwndOverlay);
+        g_hwndOverlay = NULL;
+        return false;
+    }
+
+    ID3D11Texture2D* pBackBuffer = nullptr;
+    hr = g_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
+    if (FAILED(hr) || !pBackBuffer) {
+        std::cout << "[!] Failed to create overlay render target." << std::endl;
+        return false;
+    }
+    g_pd3dDevice->CreateRenderTargetView(pBackBuffer, NULL, &g_mainRenderTargetView);
+    pBackBuffer->Release();
+
+    ImGui::CreateContext();
+    ImGui::StyleColorsDark();
+    ImGui_ImplWin32_Init(g_hwndOverlay);
+    ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
+    SetupStyle();
+    ShowWindow(g_hwndOverlay, SW_SHOW);
+    UpdateWindow(g_hwndOverlay);
+    SetForegroundWindow(g_hwndOverlay);
+
+    for (int i = 0; i < 50; i++) {
+        g_Particles.push_back({
+            (float)(rand() % ScreenWidth), (float)(rand() % ScreenHeight),
+            ((rand() % 100) - 50) / 200.0f, 0,
+            (float)(rand() % 2 + 1), (float)(rand() % 100) / 100.0f
+        });
+    }
+    return true;
 }
 
 int main() {
@@ -312,7 +375,10 @@ int main() {
         }
     }
 
-    InitOverlay();
+    if (!InitOverlay()) {
+        std::cout << "[!] Overlay initialization failed." << std::endl;
+        return 1;
+    }
     std::cout << " [+] Overlay " << ScreenWidth << "x" << ScreenHeight
         << " @ (" << mem.LastRect.left << "," << mem.LastRect.top << ")"
         << " source=" << mem.overlayAlignSource << std::endl;
@@ -340,21 +406,9 @@ int main() {
         if (GetAsyncKeyState(VK_END) & 1) break;
 
         mem.UpdateGameWindow();
-        HWND fgWindow = GetForegroundWindow();
-        bool isGameActive = false;
-        if (mem.GameHwnd != NULL) {
-            isGameActive = (fgWindow == mem.GameHwnd || fgWindow == g_hwndOverlay);
-        }
-        else if (settings::overlayAlignMode == "manual") {
-            RECT overlayRect{};
-            GetWindowRect(g_hwndOverlay, &overlayRect);
-            POINT cursor{};
-            GetCursorPos(&cursor);
-            isGameActive = PtInRect(&overlayRect, cursor);
-        }
 
         static auto lastToggle = GetTickCount64();
-        if (isGameActive && (GetAsyncKeyState(VK_INSERT) & 1) && (GetTickCount64() - lastToggle > 200)) {
+        if ((GetAsyncKeyState(VK_INSERT) & 1) && (GetTickCount64() - lastToggle > 200)) {
             bShowMenu = !bShowMenu;
             lastToggle = GetTickCount64();
             if (bShowMenu) {
@@ -362,7 +416,7 @@ int main() {
             }
         }
 
-        bool shouldBeClickThrough = !(bShowMenu && isGameActive);
+        bool shouldBeClickThrough = !bShowMenu;
         if (shouldBeClickThrough != isClickThrough) {
             LONG style = GetWindowLong(g_hwndOverlay, GWL_EXSTYLE);
             if (shouldBeClickThrough) {
@@ -384,10 +438,12 @@ int main() {
 
         ImGui_ImplDX11_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame(); ImDrawList* bg = ImGui::GetBackgroundDrawList();
 
-        if (settings::bEulaAccepted) { RenderESP(bg); DrawWatermark(bg); } RenderNotifications(bg);
+        DrawWatermark(bg);
+        if (settings::bEulaAccepted) { RenderESP(bg); }
+        RenderNotifications(bg);
 
         float dt = ImGui::GetIO().DeltaTime;
-        bool displayMenu = bShowMenu && isGameActive;
+        bool displayMenu = bShowMenu;
 
         if (displayMenu) { menuAlpha += 10.0f * dt; if (menuAlpha > 1.0f) menuAlpha = 1.0f; }
         else { menuAlpha -= 10.0f * dt; if (menuAlpha < 0.0f) menuAlpha = 0.0f; }

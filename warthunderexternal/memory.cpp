@@ -2,6 +2,18 @@
 #include "config.hpp"
 #include <iostream>
 #include <cstring>
+#include <cmath>
+
+static bool IsSaneViewMatrix(const Matrix4x4& vm) {
+    if (!std::isfinite(vm.m[15]) || std::fabs(vm.m[15]) < 1e-5f) return false;
+
+    float sum = 0.0f;
+    for (float v : vm.m) {
+        if (!std::isfinite(v)) return false;
+        sum += std::fabs(v);
+    }
+    return sum > 0.01f;
+}
 
 bool Memory::Connect() {
     if (g_dma.IsReady()) return true;
@@ -29,14 +41,56 @@ bool Memory::Connect() {
 }
 
 void Memory::Disconnect() {
+    InvalidateCGameCache();
     g_dma.Shutdown();
     ProcessID = 0;
     BaseAddress = 0;
 }
 
+void Memory::InvalidateCGameCache() const {
+    cachedCGame_ = 0;
+    cachedCGameMisses_ = 0;
+}
+
+bool Memory::EnsureAttached(const std::string& procName) {
+    if (!g_dma.IsReady()) {
+        Disconnect();
+        if (!Connect()) return false;
+    }
+
+    const DWORD currentPid = GetPID(std::wstring(procName.begin(), procName.end()));
+    if (currentPid == 0) {
+        ProcessID = 0;
+        BaseAddress = 0;
+        return false;
+    }
+
+    if (currentPid != ProcessID || BaseAddress == 0) {
+        InvalidateCGameCache();
+        ProcessID = currentPid;
+        BaseAddress = static_cast<uintptr_t>(g_dma.ModuleBase(ProcessID, procName));
+        if (BaseAddress == 0) return false;
+        std::cout << " [+] Re-attached to " << procName << " (PID " << ProcessID << ")" << std::endl;
+        return true;
+    }
+
+    g_dma.RefreshAll();
+    if (!IsGameReady()) {
+        InvalidateCGameCache();
+        BaseAddress = static_cast<uintptr_t>(g_dma.ModuleBase(ProcessID, procName));
+    }
+
+    return BaseAddress != 0 && IsGameReady();
+}
+
 bool Memory::ReadBuffer(uintptr_t addr, void* buffer, size_t size) const {
     if (!g_dma.IsReady() || !ProcessID || !addr || !buffer || size == 0) return false;
-    return g_dma.Read(ProcessID, addr, buffer, size);
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        if (g_dma.Read(ProcessID, addr, buffer, size)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 std::string Memory::ReadString(uintptr_t addr, size_t maxLen) const {
@@ -53,9 +107,11 @@ DWORD Memory::GetPID(const std::wstring& procName) {
 }
 
 bool Memory::Attach(const std::string& procName) {
+    InvalidateCGameCache();
     ProcessID = GetPID(std::wstring(procName.begin(), procName.end()));
     if (ProcessID == 0) return false;
 
+    g_dma.RefreshAll();
     BaseAddress = static_cast<uintptr_t>(g_dma.ModuleBase(ProcessID, procName));
     return BaseAddress != 0;
 }
@@ -89,7 +145,7 @@ bool Memory::DetectGameResolution() {
     std::string source = "fallback";
 
     if (settings::overlayAutoResolution && g_dma.IsReady() && BaseAddress && ProcessID) {
-        const uintptr_t cGame = Read<uintptr_t>(BaseAddress + offsets::cgame_offset);
+        const uintptr_t cGame = ResolveCGamePtr();
         if (IsValidPtr(cGame)) {
             static const uint32_t cgamePairs[][2] = {
                 { 0x0108, 0x010C }, { 0x0110, 0x0114 }, { 0x01C0, 0x01C4 },
@@ -130,22 +186,49 @@ bool Memory::DetectGameResolution() {
     return detectedW > 0 && detectedH > 0;
 }
 
+bool Memory::ValidateCGame(uintptr_t cgame) const {
+    if (!IsValidPtr(cgame)) return false;
+
+    const int count = Read<int>(cgame + offsets::cgame::unitcount);
+    if (count < 0 || count > 4096) return false;
+
+    if (count > 0) {
+        const uintptr_t unitList = Read<uintptr_t>(cgame + offsets::cgame::unitlist);
+        if (!IsValidPtr(unitList)) return false;
+    }
+
+    return true;
+}
+
+bool Memory::IsGameReady() const {
+    return IsValidPtr(ResolveCGamePtr());
+}
+
 uintptr_t Memory::ResolveCGamePtr() const {
     if (!BaseAddress) return 0;
 
-    auto hasPlausibleUnitCount = [this](uintptr_t cgame) -> bool {
-        if (!IsValidPtr(cgame)) return false;
-        const int count = Read<int>(cgame + offsets::cgame::unitcount);
-        return count >= 0 && count <= 4096;
-    };
+    if (cachedCGame_) {
+        if (ValidateCGame(cachedCGame_)) {
+            cachedCGameMisses_ = 0;
+            return cachedCGame_;
+        }
+
+        cachedCGameMisses_++;
+        if (cachedCGameMisses_ < 8) {
+            return cachedCGame_;
+        }
+    }
 
     const uintptr_t indirect = Read<uintptr_t>(BaseAddress + offsets::cgame_offset);
-    if (hasPlausibleUnitCount(indirect)) return indirect;
+    if (ValidateCGame(indirect)) {
+        cachedCGame_ = indirect;
+        cachedCGameMisses_ = 0;
+        return indirect;
+    }
 
-    const uintptr_t direct = BaseAddress + offsets::cgame_offset;
-    if (hasPlausibleUnitCount(direct)) return direct;
-
-    return IsValidPtr(indirect) ? indirect : 0;
+    cachedCGame_ = 0;
+    cachedCGameMisses_ = 0;
+    return 0;
 }
 
 bool Memory::UpdateGameWindow() {

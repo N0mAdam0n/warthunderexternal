@@ -32,6 +32,11 @@ int ScreenWidth = GetSystemMetrics(SM_CXSCREEN);
 int ScreenHeight = GetSystemMetrics(SM_CYSCREEN);
 HWND g_hwndOverlay = NULL;
 bool bShowMenu = true;
+static HANDLE g_instanceMutex = NULL;
+
+namespace app {
+    std::atomic<bool> running{ true };
+}
 
 namespace shared {
     std::vector<CachedEntity> Entities;
@@ -51,6 +56,7 @@ namespace shared {
     std::atomic<uint64_t> entityCacheTick(0);
     std::atomic<uint32_t> cachedEntityCount(0);
     std::atomic<uint32_t> rawUnitCount(0);
+    std::atomic<bool> gameLinkOk(false);
 }
 
 namespace perf {
@@ -188,10 +194,18 @@ void RenderNotifications(ImDrawList* draw) {
 
 void DrawWatermark(ImDrawList* draw) {
     time_t raw; struct tm info; char buf[80]; time(&raw); localtime_s(&info, &raw); strftime(buf, sizeof(buf), "%H:%M:%S", &info);
-    char text[256];
-    _snprintf_s(text, _TRUNCATE, "JANG DMA (WT) | Draw: %u | View: %u | Data: %u | Ent: %u/%u | Cache: %ums | %s",
+    int displayTeam = -1;
+    {
+        std::lock_guard<std::mutex> lock(shared::DataMutex);
+        displayTeam = shared::LocalTeam;
+    }
+
+    char text[320];
+    _snprintf_s(text, _TRUNCATE, "JANG DMA (WT) | Draw:%u View:%u Data:%u | Ent:%u/%u | cGame:%s Team:%d | %ums | %s",
         perf::drawFps.load(), perf::viewFps.load(), perf::entityFps.load(),
-        shared::cachedEntityCount.load(), shared::rawUnitCount.load(), perf::cacheMs.load(), buf);
+        shared::cachedEntityCount.load(), shared::rawUnitCount.load(),
+        shared::gameLinkOk.load(std::memory_order_relaxed) ? "OK" : "NO",
+        displayTeam, perf::cacheMs.load(), buf);
     ImVec2 pos(20, 20); ImVec2 tSize = ImGui::CalcTextSize(text); ImVec2 pad(12, 6);
     ImVec2 bSize(tSize.x + pad.x * 2, tSize.y + pad.y * 2);
     draw->AddRectFilled(pos, ImVec2(pos.x + bSize.x, pos.y + bSize.y), ImColor(15, 15, 15, 200), 4.0f);
@@ -253,6 +267,81 @@ static bool EnsureOverlayDimensions() {
         ScreenHeight = GetSystemMetrics(SM_CYSCREEN);
     }
     return ScreenWidth >= 100 && ScreenHeight >= 100;
+}
+
+static void SetWorkingDirectoryToExe() {
+    wchar_t modulePath[MAX_PATH]{};
+    if (!GetModuleFileNameW(nullptr, modulePath, MAX_PATH)) return;
+
+    wchar_t* slash = wcsrchr(modulePath, L'\\');
+    if (!slash) slash = wcsrchr(modulePath, L'/');
+    if (!slash) return;
+
+    *slash = L'\0';
+    SetCurrentDirectoryW(modulePath);
+}
+
+static bool AcquireSingleInstance() {
+    g_instanceMutex = CreateMutexW(nullptr, TRUE, L"Local\\JANG_WT_DMA_V1");
+    if (!g_instanceMutex || GetLastError() == ERROR_ALREADY_EXISTS) {
+        MessageBoxW(
+            nullptr,
+            L"JANG WT is already running.\n"
+            L"Stop the previous debug session or close warthunderexternal.exe before starting again.",
+            L"JANG WT",
+            MB_ICONWARNING | MB_OK
+        );
+        if (g_instanceMutex) {
+            CloseHandle(g_instanceMutex);
+            g_instanceMutex = nullptr;
+        }
+        return false;
+    }
+    return true;
+}
+
+static void ShutdownApplication() {
+    static std::atomic<bool> shutdownOnce{ false };
+    if (shutdownOnce.exchange(true)) return;
+
+    app::running.store(false, std::memory_order_relaxed);
+    Sleep(500);
+
+    Input::Shutdown();
+    mem.Disconnect();
+
+    if (g_pd3dDeviceContext) {
+        ImGui_ImplDX11_Shutdown();
+        ImGui_ImplWin32_Shutdown();
+        ImGui::DestroyContext();
+    }
+
+    if (g_mainRenderTargetView) {
+        g_mainRenderTargetView->Release();
+        g_mainRenderTargetView = nullptr;
+    }
+    if (g_pSwapChain) {
+        g_pSwapChain->Release();
+        g_pSwapChain = nullptr;
+    }
+    if (g_pd3dDeviceContext) {
+        g_pd3dDeviceContext->Release();
+        g_pd3dDeviceContext = nullptr;
+    }
+    if (g_pd3dDevice) {
+        g_pd3dDevice->Release();
+        g_pd3dDevice = nullptr;
+    }
+
+    if (g_hwndOverlay) {
+        DestroyWindow(g_hwndOverlay);
+        g_hwndOverlay = NULL;
+    }
+
+    if (g_instanceMutex) {
+        CloseHandle(g_instanceMutex);
+        g_instanceMutex = nullptr;
+    }
 }
 
 bool InitOverlay() {
@@ -331,7 +420,17 @@ bool InitOverlay() {
 int main() {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     SetConsoleTitleA("JANG DMA Loader [WT EDITION]");
+    SetWorkingDirectoryToExe();
+    if (!AcquireSingleInstance()) return 1;
+
     std::cout << "[>] Initializing DMA edition..." << std::endl;
+    std::cout << " [i] Working directory: ";
+    {
+        wchar_t cwd[MAX_PATH]{};
+        GetCurrentDirectoryW(MAX_PATH, cwd);
+        std::wcout << cwd << std::endl;
+    }
+
     std::ifstream f("license.dat"); if (f.good()) settings::bEulaAccepted = true;
 
     if (LoadDmaConfig()) {
@@ -344,6 +443,7 @@ int main() {
     std::cout << "[>] Connecting to DMA device..." << std::endl;
     if (!mem.Connect()) {
         std::cout << "[!] Failed to connect to DMA device." << std::endl;
+        ShutdownApplication();
         return 1;
     }
 
@@ -353,14 +453,20 @@ int main() {
 
     std::cout << "[>] Waiting for aces.exe on target machine... (Press END to cancel)" << std::endl;
     while (mem.GetPID(L"aces.exe") == 0) {
-        if (GetAsyncKeyState(VK_END) & 1) return 0;
+        if (GetAsyncKeyState(VK_END) & 1) {
+            ShutdownApplication();
+            return 0;
+        }
         Sleep(1000);
     }
     std::cout << " [+] Found aces.exe!" << std::endl;
 
     std::cout << " [>] Attaching to process..." << std::endl;
     while (!mem.Attach("aces.exe")) {
-        if (GetAsyncKeyState(VK_END) & 1) return 0;
+        if (GetAsyncKeyState(VK_END) & 1) {
+            ShutdownApplication();
+            return 0;
+        }
         Sleep(1000);
     }
     std::cout << " [+] Attached successfully! Fetching offsets from API..." << std::endl;
@@ -376,10 +482,13 @@ int main() {
 
     if (!InitOverlay()) {
         std::cout << "[!] ESP window initialization failed." << std::endl;
+        ShutdownApplication();
         return 1;
     }
     std::cout << " [+] ESP window ready: " << ScreenWidth << "x" << ScreenHeight
         << " @ (" << mem.LastRect.left << "," << mem.LastRect.top << ")" << std::endl;
+
+    std::cout << " [+] Background data threads starting (enter a match for ESP)..." << std::endl;
 
     std::thread(FastViewThread).detach();
     std::thread(CacheThread).detach();
@@ -395,8 +504,15 @@ int main() {
     if (bShowMenu) { SetWindowLong(g_hwndOverlay, GWL_EXSTYLE, exStyle & ~WS_EX_TRANSPARENT); SetForegroundWindow(g_hwndOverlay); }
     else { SetWindowLong(g_hwndOverlay, GWL_EXSTYLE, exStyle | WS_EX_TRANSPARENT); }
 
-    while (true) {
-        MSG msg; while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessage(&msg); if (msg.message == WM_QUIT) return 0; }
+    while (app::running.load(std::memory_order_relaxed)) {
+        MSG msg; while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+            if (msg.message == WM_QUIT) {
+                ShutdownApplication();
+                return 0;
+            }
+        }
         if (GetAsyncKeyState(VK_END) & 1) break;
 
         mem.UpdateGameWindow();
@@ -567,9 +683,11 @@ int main() {
                     }
                     if (!settings::bEnableEntityHijack) ImGui::BeginDisabled();
 
-                    shared::DataMutex.lock();
-                    std::vector<CachedEntity> uiEntities = shared::Entities;
-                    shared::DataMutex.unlock();
+                    std::vector<CachedEntity> uiEntities;
+                    {
+                        std::lock_guard<std::mutex> lock(shared::DataMutex);
+                        uiEntities = shared::Entities;
+                    }
 
                     static int selectedEnt = -1;
                     std::string preview = "Select Target...";
@@ -630,7 +748,7 @@ int main() {
                     ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
                     UI::Toggle("Auto Team Detect", &settings::bAutoTeam); if (!settings::bAutoTeam) { ImGui::Indent(15.0f); ImGui::SliderInt("Manual ID", &settings::ManualTeam, 0, 4); ImGui::Unindent(15.0f); }
                     ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-                    if (UI::Button("Streamer Mode", ImVec2(-1, 40))) { settings::bStreamerMode = !settings::bStreamerMode; PushNotification("Streamer Mode Toggled"); } ImGui::Spacing(); if (UI::Button("UNLOAD", ImVec2(-1, 40))) { Input::Shutdown(); mem.Disconnect(); exit(0); } ImGui::EndChild();
+                    if (UI::Button("Streamer Mode", ImVec2(-1, 40))) { settings::bStreamerMode = !settings::bStreamerMode; PushNotification("Streamer Mode Toggled"); } ImGui::Spacing(); if (UI::Button("UNLOAD", ImVec2(-1, 40))) { app::running.store(false, std::memory_order_relaxed); } ImGui::EndChild();
                 }
             }
             ImGui::EndChild(); ImGui::End();
@@ -642,5 +760,7 @@ int main() {
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
         g_pSwapChain->Present(0, 0);
     }
+
+    ShutdownApplication();
     return 0;
 }

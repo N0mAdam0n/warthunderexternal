@@ -10,6 +10,10 @@
 
 extern Memory mem;
 
+namespace app {
+    extern std::atomic<bool> running;
+}
+
 namespace shared {
     extern std::vector<CachedEntity> Entities;
     extern std::vector<CachedRocket> Rockets;
@@ -52,11 +56,35 @@ static bool IsSaneUnitPosition(const Vector3& pos) {
         && (std::fabs(pos.x) > 0.01f || std::fabs(pos.y) > 0.01f || std::fabs(pos.z) > 0.01f);
 }
 
+static std::mutex g_recoverMutex;
+static uint32_t g_cacheStaleStreak = 0;
+
+static bool IsSaneViewMatrix(const Matrix4x4& vm) {
+    if (!std::isfinite(vm.m[15]) || std::fabs(vm.m[15]) < 1e-5f) return false;
+
+    float sum = 0.0f;
+    for (float v : vm.m) {
+        if (!std::isfinite(v)) return false;
+        sum += std::fabs(v);
+    }
+    return sum > 0.01f;
+}
+
+static void TryRecoverGameData() {
+    std::lock_guard<std::mutex> lock(g_recoverMutex);
+    if (mem.EnsureAttached()) {
+        g_cacheStaleStreak = 0;
+    }
+}
+
 void FastViewThread() {
     float bulletVelocity = 800.0f;
     Vector3 lastLocalUnitPos = { 0, 0, 0 };
+    Matrix4x4 lastGoodView = { 0 };
+    Matrix4x4 lastGoodViewAlt = { 0 };
+    bool hasGoodView = false;
 
-    while (true) {
+    while (app::running.load(std::memory_order_relaxed)) {
         if (!mem.BaseAddress) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
@@ -64,15 +92,38 @@ void FastViewThread() {
 
         const uintptr_t cGame = mem.ResolveCGamePtr();
         if (!mem.IsValidPtr(cGame)) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
             continue;
         }
 
         const Matrix4x4 viewAlt = mem.Read<Matrix4x4>(mem.BaseAddress + offsets::view_matrix_offset);
         uintptr_t camPtr = mem.Read<uintptr_t>(cGame + offsets::cgame::camera);
-        Matrix4x4 viewM = mem.IsValidPtr(camPtr)
-            ? mem.Read<Matrix4x4>(camPtr + offsets::camera::matrix)
-            : viewAlt;
+        Matrix4x4 viewM = viewAlt;
+        if (mem.IsValidPtr(camPtr)) {
+            const Matrix4x4 camView = mem.Read<Matrix4x4>(camPtr + offsets::camera::matrix);
+            if (IsSaneViewMatrix(camView)) {
+                viewM = camView;
+            }
+            else if (IsSaneViewMatrix(viewAlt)) {
+                viewM = viewAlt;
+            }
+        }
+        else if (!IsSaneViewMatrix(viewM) && hasGoodView) {
+            viewM = lastGoodView;
+        }
+
+        if (IsSaneViewMatrix(viewM)) {
+            lastGoodView = viewM;
+            lastGoodViewAlt = viewAlt;
+            hasGoodView = true;
+        }
+        else if (hasGoodView) {
+            viewM = lastGoodView;
+        }
+        else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
 
         Vector3 localUnitPos = lastLocalUnitPos;
 
@@ -98,8 +149,8 @@ void FastViewThread() {
 
         {
             std::lock_guard<std::mutex> lock(shared::DataMutex);
-            shared::ViewMatrix = viewM;
-            shared::ViewMatrixAlt = viewAlt;
+            shared::ViewMatrix = hasGoodView ? lastGoodView : viewM;
+            shared::ViewMatrixAlt = hasGoodView ? lastGoodViewAlt : viewAlt;
             if (IsSaneUnitPosition(localUnitPos)) {
                 shared::LocalPos = localUnitPos;
                 shared::LocalUnitPos = localUnitPos;
@@ -116,14 +167,35 @@ void FastViewThread() {
 void CacheThread() {
     static uintptr_t cachedRealLocalUnit = 0;
     static bool restoreControlPending = false;
+    static uint64_t lastRefreshTick = 0;
 
-    while (true) {
+    while (app::running.load(std::memory_order_relaxed)) {
         const auto iterationStart = std::chrono::steady_clock::now();
 
-        if (!mem.BaseAddress) { std::this_thread::sleep_for(std::chrono::milliseconds(500)); continue; }
+        if (!mem.BaseAddress) {
+            TryRecoverGameData();
+            shared::gameLinkOk.store(false, std::memory_order_relaxed);
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            continue;
+        }
+
+        const uint64_t nowTick = GetTickCount64();
+        if (nowTick - lastRefreshTick >= 2000) {
+            g_dma.RefreshAll();
+            lastRefreshTick = nowTick;
+        }
 
         const uintptr_t cGame = mem.ResolveCGamePtr();
-        if (!mem.IsValidPtr(cGame)) { std::this_thread::sleep_for(std::chrono::milliseconds(100)); continue; }
+        if (!mem.IsValidPtr(cGame)) {
+            shared::gameLinkOk.store(false, std::memory_order_relaxed);
+            if (++g_cacheStaleStreak > 10) {
+                TryRecoverGameData();
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            continue;
+        }
+        g_cacheStaleStreak = 0;
+        shared::gameLinkOk.store(true, std::memory_order_relaxed);
 
         if (settings::bEnableMemoryWrites) {
             uintptr_t hudPtr = mem.Read<uintptr_t>(mem.BaseAddress + offsets::hud_offset);
@@ -186,10 +258,7 @@ void CacheThread() {
 
         std::vector<CachedEntity> tempCache;
         int lTeam = -1;
-        if (mem.IsValidPtr(cachedRealLocalUnit)) {
-            const uint8_t localTeam = mem.Read<uint8_t>(cachedRealLocalUnit + offsets::unit::unitArmyNo_offset);
-            if (localTeam != 0) lTeam = localTeam;
-        }
+        bool teamConfirmed = false;
 
         for (int i = 0; i < count; i++) {
             uintptr_t ptr = ptrs[i];
@@ -208,6 +277,7 @@ void CacheThread() {
 
             if (cachedRealLocalUnit != 0 && ptr == cachedRealLocalUnit) {
                 lTeam = team;
+                teamConfirmed = true;
                 if (IsSaneUnitPosition(pos)) {
                     trueLocalPos = pos;
                     lastCachedLocalPos = pos;
@@ -432,16 +502,22 @@ void CacheThread() {
 
         {
             std::lock_guard<std::mutex> lock(shared::DataMutex);
-            shared::LocalTeam = lTeam;
+            shared::LocalTeam = teamConfirmed ? lTeam : -1;
             if (IsSaneUnitPosition(trueLocalPos)) {
                 shared::LocalUnitPos = trueLocalPos;
             }
-            shared::Entities = std::move(tempCache);
+
+            const bool publishEntities = !tempCache.empty() || count == 0;
+            if (publishEntities) {
+                shared::Entities = std::move(tempCache);
+                shared::entityCacheTick.store(GetTickCount64(), std::memory_order_relaxed);
+            }
             shared::Rockets = std::move(tempRockets);
-            shared::entityCacheTick.store(GetTickCount64(), std::memory_order_relaxed);
+            if (publishEntities) {
+                shared::cachedEntityCount.store(static_cast<uint32_t>(shared::Entities.size()), std::memory_order_relaxed);
+                shared::entityGeneration.fetch_add(1, std::memory_order_relaxed);
+            }
         }
-        shared::cachedEntityCount.store(static_cast<uint32_t>(tempCache.size()), std::memory_order_relaxed);
-        shared::entityGeneration.fetch_add(1, std::memory_order_relaxed);
 
         const auto iterationEnd = std::chrono::steady_clock::now();
         perf::cacheMs.store(
@@ -449,6 +525,6 @@ void CacheThread() {
             std::memory_order_relaxed
         );
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        std::this_thread::sleep_for(std::chrono::milliseconds(8));
     }
 }

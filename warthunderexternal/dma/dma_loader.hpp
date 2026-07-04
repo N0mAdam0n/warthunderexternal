@@ -5,6 +5,7 @@
 #include <Windows.h>
 #include <cstdint>
 #include <string>
+#include <mutex>
 
 using VMM_HANDLE = void*;
 
@@ -29,6 +30,7 @@ public:
 
     bool LoadLibraries(const std::string& relativeFolder = "dma");
     bool Initialize(const std::string& device, bool disableRefresh = true);
+    void CloseHandle();
     void Shutdown();
 
     bool RefreshAll();
@@ -61,3 +63,4 @@ private:
 };
 
 extern DmaLoader g_dma;
+extern std::recursive_mutex g_dmaApiMutex;

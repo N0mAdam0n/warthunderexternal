@@ -3,7 +3,9 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <cmath>
 #include "offsets.hpp"
+#include "structs.hpp"
 
 extern int ScreenWidth;
 extern int ScreenHeight;
@@ -23,6 +25,7 @@ public:
 
     bool Connect();
     void Disconnect();
+    bool EnsureAttached(const std::string& procName = "aces.exe");
 
     template <typename T> T Read(uintptr_t addr) const;
     template <typename T> bool Write(uintptr_t addr, const T& val);
@@ -35,7 +38,14 @@ public:
     bool UpdateOffsets();
     bool DetectGameResolution();
     bool UpdateGameWindow();
+    bool IsGameReady() const;
+    void InvalidateCGameCache() const;
     uintptr_t ResolveCGamePtr() const;
+
+private:
+    mutable uintptr_t cachedCGame_ = 0;
+    mutable int cachedCGameMisses_ = 0;
+    bool ValidateCGame(uintptr_t cgame) const;
 };
 
 void ResizeOverlayRenderTargets(int width, int height);
@@ -54,7 +64,11 @@ template <typename T>
 T Memory::Read(uintptr_t addr) const {
     T buffer = {};
     if (!g_dma.IsReady() || !ProcessID || !addr) return buffer;
-    g_dma.Read(ProcessID, addr, &buffer, sizeof(T));
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        if (g_dma.Read(ProcessID, addr, &buffer, sizeof(T))) {
+            return buffer;
+        }
+    }
     return buffer;
 }
 

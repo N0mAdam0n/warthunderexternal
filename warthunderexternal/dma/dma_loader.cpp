@@ -8,6 +8,7 @@
 #include <vector>
 
 DmaLoader g_dma;
+std::recursive_mutex g_dmaApiMutex;
 
 static std::string WideToUtf8(const std::wstring& value) {
     if (value.empty()) return {};
@@ -139,37 +140,55 @@ bool DmaLoader::ResolveExports() {
 }
 
 bool DmaLoader::Initialize(const std::string& device, bool disableRefresh) {
+    std::lock_guard<std::recursive_mutex> lock(g_dmaApiMutex);
     if (handle) return true;
 
-    std::string deviceArg = "-device";
-    std::string deviceVal = device.empty() ? "fpga" : device;
-    std::string waitInit = "-waitinitialize";
-    std::vector<std::string> argStorage = { "", deviceArg, deviceVal, waitInit };
-    if (disableRefresh) {
-        argStorage.emplace_back("-norefresh");
-    }
+    const std::string deviceVal = device.empty() ? "fpga" : device;
+    for (int attempt = 1; attempt <= 3; ++attempt) {
+        CloseHandle();
 
-    std::vector<LPCSTR> args;
-    args.reserve(argStorage.size());
-    for (const auto& item : argStorage) {
-        args.push_back(item.c_str());
-    }
+        std::string deviceArg = "-device";
+        std::string waitInit = "-waitinitialize";
+        std::vector<std::string> argStorage = { "", deviceArg, deviceVal, waitInit };
+        if (disableRefresh) {
+            argStorage.emplace_back("-norefresh");
+        }
 
-    handle = pfnInitializeEx
-        ? pfnInitializeEx(static_cast<DWORD>(args.size()), args.data(), nullptr)
-        : pfnInitialize(static_cast<DWORD>(args.size()), args.data());
+        std::vector<LPCSTR> args;
+        args.reserve(argStorage.size());
+        for (const auto& item : argStorage) {
+            args.push_back(item.c_str());
+        }
 
-    if (!handle) {
+        handle = pfnInitializeEx
+            ? pfnInitializeEx(static_cast<DWORD>(args.size()), args.data(), nullptr)
+            : pfnInitialize(static_cast<DWORD>(args.size()), args.data());
+
+        if (handle) {
+            std::cout << " [+] MemProcFS initialized from: " << dllDirectory << std::endl;
+            std::cout << "     Device: " << deviceVal << std::endl;
+            return true;
+        }
+
         lastError = "VMMDLL_Initialize failed. Check FPGA device and cabling.";
-        return false;
+        if (attempt < 3) {
+            std::cout << "[!] DMA init attempt " << attempt << "/3 failed, retrying..." << std::endl;
+            Sleep(1500);
+        }
     }
 
-    std::cout << " [+] MemProcFS initialized from: " << dllDirectory << std::endl;
-    std::cout << "     Device: " << deviceVal << std::endl;
-    return true;
+    return false;
+}
+
+void DmaLoader::CloseHandle() {
+    if (handle && pfnClose) {
+        pfnClose(handle);
+        handle = nullptr;
+    }
 }
 
 void DmaLoader::Shutdown() {
+    std::lock_guard<std::recursive_mutex> lock(g_dmaApiMutex);
     if (handle && pfnClose) {
         pfnClose(handle);
         handle = nullptr;
@@ -191,25 +210,37 @@ void DmaLoader::Shutdown() {
         ftd3xxModule = nullptr;
     }
     SetDllDirectoryW(nullptr);
+
+    pfnInitialize = nullptr;
+    pfnInitializeEx = nullptr;
+    pfnClose = nullptr;
+    pfnConfigSet = nullptr;
+    pfnPidGetFromName = nullptr;
+    pfnProcessGetModuleBaseU = nullptr;
+    pfnMemReadEx = nullptr;
+    pfnMemWrite = nullptr;
 }
 
 bool DmaLoader::RefreshAll() {
+    std::lock_guard<std::recursive_mutex> lock(g_dmaApiMutex);
     return handle && pfnConfigSet && pfnConfigSet(handle, VMMDLL_OPT_REFRESH_ALL, 1);
 }
 
 DWORD DmaLoader::PidFromName(const std::string& processName) {
+    std::lock_guard<std::recursive_mutex> lock(g_dmaApiMutex);
     if (!handle || !pfnPidGetFromName) return 0;
-    RefreshAll();
     DWORD pid = 0;
     return pfnPidGetFromName(handle, processName.c_str(), &pid) ? pid : 0;
 }
 
 ULONG64 DmaLoader::ModuleBase(DWORD pid, const std::string& moduleName) {
+    std::lock_guard<std::recursive_mutex> lock(g_dmaApiMutex);
     if (!handle || !pfnProcessGetModuleBaseU || pid == 0) return 0;
     return pfnProcessGetModuleBaseU(handle, pid, moduleName.c_str());
 }
 
 bool DmaLoader::Read(DWORD pid, ULONG64 address, void* buffer, size_t size) {
+    std::lock_guard<std::recursive_mutex> lock(g_dmaApiMutex);
     if (!handle || !pfnMemReadEx || pid == 0 || address == 0 || !buffer || size == 0) return false;
 
     auto* bytes = static_cast<uint8_t*>(buffer);
@@ -229,6 +260,7 @@ bool DmaLoader::Read(DWORD pid, ULONG64 address, void* buffer, size_t size) {
 }
 
 bool DmaLoader::Write(DWORD pid, ULONG64 address, const void* buffer, size_t size) {
+    std::lock_guard<std::recursive_mutex> lock(g_dmaApiMutex);
     if (!handle || !pfnMemWrite || pid == 0 || address == 0 || !buffer || size == 0) return false;
     return pfnMemWrite(handle, pid, address, reinterpret_cast<PBYTE>(const_cast<void*>(buffer)), static_cast<DWORD>(size));
 }

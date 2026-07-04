@@ -66,6 +66,10 @@ struct CachedRocket {
     bool isThreat;
 };
 
+namespace app {
+    extern std::atomic<bool> running;
+}
+
 namespace shared {
     extern std::vector<CachedEntity> Entities;
     extern std::vector<CachedRocket> Rockets; 
@@ -84,6 +88,7 @@ namespace shared {
     extern std::atomic<uint64_t> entityCacheTick;
     extern std::atomic<uint32_t> cachedEntityCount;
     extern std::atomic<uint32_t> rawUnitCount;
+    extern std::atomic<bool> gameLinkOk;
 }
 
 namespace perf {

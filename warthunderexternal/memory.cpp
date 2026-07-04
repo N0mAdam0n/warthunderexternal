@@ -74,7 +74,6 @@ bool Memory::EnsureAttached(const std::string& procName) {
         return true;
     }
 
-    g_dma.RefreshAll();
     if (!IsGameReady()) {
         InvalidateCGameCache();
         BaseAddress = static_cast<uintptr_t>(g_dma.ModuleBase(ProcessID, procName));
@@ -234,7 +233,7 @@ uintptr_t Memory::ResolveCGamePtr() const {
 bool Memory::UpdateGameWindow() {
     static uint64_t lastResolutionCheck = 0;
     const uint64_t now = GetTickCount64();
-    if (now - lastResolutionCheck >= 2000) {
+    if (now - lastResolutionCheck >= 10000) {
         DetectGameResolution();
         lastResolutionCheck = now;
     }

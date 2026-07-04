@@ -20,6 +20,8 @@ using PFN_VMMDLL_MemWrite = BOOL(__cdecl*)(VMM_HANDLE hVMM, DWORD dwPID, ULONG64
 
 constexpr ULONG64 VMMDLL_FLAG_NOCACHE = 0x0001;
 constexpr ULONG64 VMMDLL_OPT_REFRESH_ALL = 0x2001ffff00000000ULL;
+constexpr ULONG64 VMMDLL_OPT_REFRESH_FREQ_MEM = 0x2001ffff00000001ULL;
+constexpr ULONG64 VMMDLL_OPT_REFRESH_FREQ_TLB = 0x2001ffff00000002ULL;
 
 class DmaLoader {
 public:
@@ -34,6 +36,7 @@ public:
     void Shutdown();
 
     bool RefreshAll();
+    bool ConfigureAutoRefresh(uint32_t intervalMs = 1000);
     DWORD PidFromName(const std::string& processName);
     ULONG64 ModuleBase(DWORD pid, const std::string& moduleName);
     bool Read(DWORD pid, ULONG64 address, void* buffer, size_t size);

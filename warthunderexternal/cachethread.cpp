@@ -72,6 +72,7 @@ static bool IsSaneViewMatrix(const Matrix4x4& vm) {
 
 static void TryRecoverGameData() {
     std::lock_guard<std::mutex> lock(g_recoverMutex);
+    g_dma.RefreshAll();
     if (mem.EnsureAttached()) {
         g_cacheStaleStreak = 0;
     }
@@ -167,7 +168,6 @@ void FastViewThread() {
 void CacheThread() {
     static uintptr_t cachedRealLocalUnit = 0;
     static bool restoreControlPending = false;
-    static uint64_t lastRefreshTick = 0;
 
     while (app::running.load(std::memory_order_relaxed)) {
         const auto iterationStart = std::chrono::steady_clock::now();
@@ -177,12 +177,6 @@ void CacheThread() {
             shared::gameLinkOk.store(false, std::memory_order_relaxed);
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
             continue;
-        }
-
-        const uint64_t nowTick = GetTickCount64();
-        if (nowTick - lastRefreshTick >= 2000) {
-            g_dma.RefreshAll();
-            lastRefreshTick = nowTick;
         }
 
         const uintptr_t cGame = mem.ResolveCGamePtr();

@@ -165,6 +165,7 @@ bool DmaLoader::Initialize(const std::string& device, bool disableRefresh) {
             : pfnInitialize(static_cast<DWORD>(args.size()), args.data());
 
         if (handle) {
+            ConfigureAutoRefresh(1000);
             std::cout << " [+] MemProcFS initialized from: " << dllDirectory << std::endl;
             std::cout << "     Device: " << deviceVal << std::endl;
             return true;
@@ -224,6 +225,14 @@ void DmaLoader::Shutdown() {
 bool DmaLoader::RefreshAll() {
     std::lock_guard<std::recursive_mutex> lock(g_dmaApiMutex);
     return handle && pfnConfigSet && pfnConfigSet(handle, VMMDLL_OPT_REFRESH_ALL, 1);
+}
+
+bool DmaLoader::ConfigureAutoRefresh(uint32_t intervalMs) {
+    std::lock_guard<std::recursive_mutex> lock(g_dmaApiMutex);
+    if (!handle || !pfnConfigSet || intervalMs < 100) return false;
+    const BOOL memOk = pfnConfigSet(handle, VMMDLL_OPT_REFRESH_FREQ_MEM, intervalMs);
+    const BOOL tlbOk = pfnConfigSet(handle, VMMDLL_OPT_REFRESH_FREQ_TLB, intervalMs);
+    return memOk && tlbOk;
 }
 
 DWORD DmaLoader::PidFromName(const std::string& processName) {

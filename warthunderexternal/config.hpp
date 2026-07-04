@@ -8,6 +8,7 @@ namespace settings {
     extern int overlayY;
     extern int overlayWidth;
     extern int overlayHeight;
+    extern bool overlayAutoResolution;
 
     extern bool bUseKmbox;
     extern std::string kmboxIp;

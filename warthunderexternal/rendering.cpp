@@ -3,6 +3,7 @@
 #include "input.hpp"
 #include "imgui/imgui.h"
 #include <cmath>
+#include <string>
 
 extern int ScreenWidth;
 extern int ScreenHeight;
@@ -89,13 +90,12 @@ void RenderESP(ImDrawList* draw) {
                     ImColor(255, 50, 50, 255)
                 );
 
-                char rText[64];
-                sprintf_s(rText, "%s[%.1fkm]", r.name.c_str(), r.distanceToLocal / 1000.0f);
-                draw->AddText(ImVec2(sPos.x + 10, sPos.y - 8), ImColor(255, 100, 100), rText);
+                const std::string rText = r.name + "[" + std::to_string(static_cast<int>(r.distanceToLocal / 1000.0f)) + "km]";
+                draw->AddText(ImVec2(sPos.x + 10, sPos.y - 8), ImColor(255, 100, 100), rText.c_str());
 
                 if (r.isThreat) {
-                    char warn[64];
-                    sprintf_s(warn, "MISSILE INCOMING: %.1fs", r.timeToImpact);
+                    char warn[96];
+                    _snprintf_s(warn, _TRUNCATE, "MISSILE INCOMING: %.1fs", r.timeToImpact);
                     ImVec2 tSize = ImGui::CalcTextSize(warn);
 
                     // red flash
@@ -128,8 +128,9 @@ void RenderESP(ImDrawList* draw) {
         ImVec2 screenPos;
         if (!WorldToScreen(drawEnt.position, screenPos, vm)) continue;
 
-        float dist = drawEnt.position.x * vm.m[3] + drawEnt.position.y * vm.m[7] + drawEnt.position.z * vm.m[11] + vm.m[15];
-        if (dist < 0.0f) dist = 0.0f;
+        float clipW = drawEnt.position.x * vm.m[3] + drawEnt.position.y * vm.m[7] + drawEnt.position.z * vm.m[11] + vm.m[15];
+        if (clipW < 0.0f) clipW = 0.0f;
+        const float distMeters = drawEnt.position.Distance(lPos);
 
         ImU32 boxColor = ImGui::ColorConvertFloat4ToU32(*(ImVec4*)settings::col_BoxVis);
 
@@ -284,7 +285,8 @@ void RenderESP(ImDrawList* draw) {
             }
 
             if (settings::bDistance) {
-                char dbuf[32]; sprintf_s(dbuf, "%.0fm", dist);
+                char dbuf[32];
+                _snprintf_s(dbuf, _TRUNCATE, "%.0fm", distMeters);
                 draw->AddText(ImVec2(mix, may + 2), ImColor(255, 255, 255), dbuf);
             }
             if (settings::bName) draw->AddText(ImVec2(mix, miy - 15), ImColor(200, 200, 200), ent.name.c_str());
@@ -302,7 +304,7 @@ void RenderESP(ImDrawList* draw) {
         Vector3 targetWeak = { (ent.bbMin.x + ent.bbMax.x) / 2.0f, ent.bbMin.y + (h * settings::targetHeightRatio), (ent.bbMin.z + ent.bbMax.z) / 2.0f };
         Vector3 tReal = TransformVec(targetWeak, drawEnt.rotation, drawEnt.position);
 
-        float fTime = bVel > 10.0f ? dist / bVel : 0.0f;
+        float fTime = bVel > 10.0f ? clipW / bVel : 0.0f;
 
         if (settings::bPrediction || settings::bAirLead) {
             tReal = tReal + (ent.velocity * fTime);

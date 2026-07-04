@@ -8,8 +8,9 @@ namespace settings {
     std::string dmaDevice = "fpga";
     int overlayX = 0;
     int overlayY = 0;
-    int overlayWidth = 0;
-    int overlayHeight = 0;
+    int overlayWidth = 1920;
+    int overlayHeight = 1080;
+    bool overlayAutoResolution = true;
 
     bool bUseKmbox = false;
     std::string kmboxIp = "192.168.2.188";
@@ -40,7 +41,8 @@ static void ApplyConfigValue(const std::string& section, const std::string& key,
     }
 
     if (section == "overlay") {
-        if (key == "overlay_x" && !value.empty()) settings::overlayX = std::stoi(value);
+        if (key == "auto_resolution") settings::overlayAutoResolution = (value == "1" || value == "true" || value == "yes");
+        else if (key == "overlay_x" && !value.empty()) settings::overlayX = std::stoi(value);
         else if (key == "overlay_y" && !value.empty()) settings::overlayY = std::stoi(value);
         else if (key == "overlay_width" && !value.empty()) settings::overlayWidth = std::stoi(value);
         else if (key == "overlay_height" && !value.empty()) settings::overlayHeight = std::stoi(value);

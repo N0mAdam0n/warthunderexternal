@@ -7,7 +7,7 @@
 #include <sstream> 
 #include <fstream>
 #include <time.h>
-#include <dwmapi.h>
+
 #include <algorithm>
 #include <cmath>
 #include <atomic>
@@ -25,7 +25,7 @@
 #include <d3d11.h>
 
 #pragma comment(lib, "d3d11.lib")
-#pragma comment(lib, "dwmapi.lib")
+
 
 Memory mem;
 int ScreenWidth = GetSystemMetrics(SM_CXSCREEN);
@@ -184,8 +184,8 @@ void RenderNotifications(ImDrawList* draw) {
 
 void DrawWatermark(ImDrawList* draw) {
     time_t raw; struct tm info; char buf[80]; time(&raw); localtime_s(&info, &raw); strftime(buf, sizeof(buf), "%H:%M:%S", &info);
-    char text[192];
-    sprintf_s(text, "JANG DMA (WT) | Draw: %u | View: %u | Data: %u | Cache: %ums | %s",
+    char text[256];
+    _snprintf_s(text, _TRUNCATE, "JANG DMA (WT) | Draw: %u | View: %u | Data: %u | Cache: %ums | %s",
         perf::drawFps.load(), perf::viewFps.load(), perf::entityFps.load(), perf::cacheMs.load(), buf);
     ImVec2 pos(20, 20); ImVec2 tSize = ImGui::CalcTextSize(text); ImVec2 pad(12, 6);
     ImVec2 bSize(tSize.x + pad.x * 2, tSize.y + pad.y * 2);
@@ -251,26 +251,24 @@ static bool EnsureOverlayDimensions() {
 }
 
 bool InitOverlay() {
+    mem.DetectGameResolution();
     mem.UpdateGameWindow();
     if (!EnsureOverlayDimensions()) {
-        std::cout << "[!] Invalid overlay size." << std::endl;
+        std::cout << "[!] Invalid ESP window size." << std::endl;
         return false;
     }
 
-    WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(NULL), NULL, NULL, NULL, NULL, L"SaturnClass", NULL };
+    WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(NULL), NULL, NULL, NULL, NULL, L"JangEspClass", NULL };
     RegisterClassExW(&wc);
     g_hwndOverlay = CreateWindowExW(
-        WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_TOOLWINDOW,
-        L"SaturnClass", L"SaturnOverlay", WS_POPUP,
+        WS_EX_TOPMOST,
+        L"JangEspClass", L"JANG WT ESP", WS_POPUP,
         mem.LastRect.left, mem.LastRect.top, ScreenWidth, ScreenHeight,
         NULL, NULL, wc.hInstance, NULL);
     if (!g_hwndOverlay) {
-        std::cout << "[!] Failed to create overlay window. Error=" << GetLastError() << std::endl;
+        std::cout << "[!] Failed to create ESP window. Error=" << GetLastError() << std::endl;
         return false;
     }
-
-    MARGINS margins = { -1, -1, -1, -1 };
-    DwmExtendFrameIntoClientArea(g_hwndOverlay, &margins);
 
     DXGI_SWAP_CHAIN_DESC sd = {};
     sd.BufferCount = 2;
@@ -366,11 +364,16 @@ int main() {
         std::cout << "[!] Using built-in offset defaults." << std::endl;
     }
 
+    std::cout << "[>] Detecting game resolution..." << std::endl;
+    mem.DetectGameResolution();
+    std::cout << " [+] Game resolution: " << mem.GameScreenWidth << "x" << mem.GameScreenHeight
+        << " (source=" << mem.resolutionSource << ")" << std::endl;
+
     if (!InitOverlay()) {
-        std::cout << "[!] Overlay initialization failed." << std::endl;
+        std::cout << "[!] ESP window initialization failed." << std::endl;
         return 1;
     }
-    std::cout << " [+] DMA overlay ready: " << ScreenWidth << "x" << ScreenHeight
+    std::cout << " [+] ESP window ready: " << ScreenWidth << "x" << ScreenHeight
         << " @ (" << mem.LastRect.left << "," << mem.LastRect.top << ")" << std::endl;
 
     std::thread(FastViewThread).detach();
@@ -476,7 +479,8 @@ int main() {
                     ImGui::Text("Device: %s", settings::dmaDevice.c_str());
                     ImGui::Text("Target PID: %lu", mem.ProcessID);
                     ImGui::Text("Base: 0x%llX", (unsigned long long)mem.BaseAddress);
-                    ImGui::Text("Overlay: %dx%d @ (%d,%d)", ScreenWidth, ScreenHeight, mem.LastRect.left, mem.LastRect.top);
+                    ImGui::Text("Game: %dx%d (%s)", mem.GameScreenWidth, mem.GameScreenHeight, mem.resolutionSource.c_str());
+                    ImGui::Text("ESP Window: %dx%d @ (%d,%d)", ScreenWidth, ScreenHeight, mem.LastRect.left, mem.LastRect.top);
                     ImGui::Text("Draw FPS: %u | View: %u | Data: %u | Loop: %u | Cache: %ums",
                         perf::drawFps.load(), perf::viewFps.load(), perf::entityFps.load(), perf::loopFps.load(), perf::cacheMs.load());
                     ImGui::Text("Kmbox: %s", Input::IsReady() ? "Connected" : (settings::bUseKmbox ? "Failed" : "Disabled"));
@@ -554,9 +558,9 @@ int main() {
                     static int selectedEnt = -1;
                     std::string preview = "Select Target...";
                     if (selectedEnt >= 0 && selectedEnt < (int)uiEntities.size()) {
-                        char buf[128];
-                        snprintf(buf, sizeof(buf), "[%s] %s", uiEntities[selectedEnt].team == shared::LocalTeam ? "TEAM" : "ENEMY", uiEntities[selectedEnt].name.c_str());
-                        preview = buf;
+                        preview = std::string("[") +
+                            (uiEntities[selectedEnt].team == shared::LocalTeam ? "TEAM" : "ENEMY") +
+                            "] " + uiEntities[selectedEnt].name;
                     }
                     else {
                         selectedEnt = -1;
@@ -564,10 +568,11 @@ int main() {
 
                     if (ImGui::BeginCombo("##HijackCombo", preview.c_str())) {
                         for (int i = 0; i < (int)uiEntities.size(); i++) {
-                            char buf[128];
-                            snprintf(buf, sizeof(buf), "[%s] %s", uiEntities[i].team == shared::LocalTeam ? "TEAM" : "ENEMY", uiEntities[i].name.c_str());
+                            const std::string label = std::string("[") +
+                                (uiEntities[i].team == shared::LocalTeam ? "TEAM" : "ENEMY") +
+                                "] " + uiEntities[i].name;
                             bool is_selected = (selectedEnt == i);
-                            if (ImGui::Selectable(buf, is_selected)) {
+                            if (ImGui::Selectable(label.c_str(), is_selected)) {
                                 selectedEnt = i;
                                 shared::TargetHijackPtr = uiEntities[i].pointer;
                             }
@@ -603,7 +608,9 @@ int main() {
                 else if (activeTab == 4) {
                     ImGui::BeginChild("Cfg", ImVec2(0, 0), true); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "SYSTEM & CONFIG"); ImGui::Separator();
                     ImGui::TextDisabled("Edit dma_config.ini and restart to apply DMA/Kmbox/overlay settings.");
-                    ImGui::Text("Overlay: %dx%d @ (%d,%d)", ScreenWidth, ScreenHeight, settings::overlayX, settings::overlayY);
+                    ImGui::Text("Game: %dx%d (%s)", mem.GameScreenWidth, mem.GameScreenHeight, mem.resolutionSource.c_str());
+                    ImGui::Text("ESP Window: %dx%d @ (%d,%d)", ScreenWidth, ScreenHeight, settings::overlayX, settings::overlayY);
+                    ImGui::Text("Auto Resolution: %s", settings::overlayAutoResolution ? "ON" : "OFF");
                     ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
                     UI::Toggle("Auto Team Detect", &settings::bAutoTeam); if (!settings::bAutoTeam) { ImGui::Indent(15.0f); ImGui::SliderInt("Manual ID", &settings::ManualTeam, 0, 4); ImGui::Unindent(15.0f); }
                     ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
@@ -612,7 +619,12 @@ int main() {
             }
             ImGui::EndChild(); ImGui::End();
         }
-        ImGui::Render(); float cc[4] = { 0,0,0,0 }; g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, NULL); g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, cc); ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData()); g_pSwapChain->Present(0, 0);
+        ImGui::Render();
+        const float cc[4] = { 0.02f, 0.02f, 0.02f, 1.0f };
+        g_pd3dDeviceContext->OMSetRenderTargets(1, &g_mainRenderTargetView, NULL);
+        g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, cc);
+        ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
+        g_pSwapChain->Present(0, 0);
     }
     return 0;
 }

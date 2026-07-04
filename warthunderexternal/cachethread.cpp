@@ -56,6 +56,21 @@ static bool IsSaneUnitPosition(const Vector3& pos) {
         && (std::fabs(pos.x) > 0.01f || std::fabs(pos.y) > 0.01f || std::fabs(pos.z) > 0.01f);
 }
 
+static bool HasPlayerNick(uintptr_t infoPtr) {
+    if (!mem.IsValidPtr(infoPtr)) return false;
+    uintptr_t nickPtr = mem.Read<uintptr_t>(infoPtr + offsets::wtinfo::PlayerNick);
+    if (!mem.IsValidPtr(nickPtr)) return false;
+    const std::string nick = mem.ReadString(nickPtr, 48);
+    return !nick.empty();
+}
+
+static bool IsUnitBot(uintptr_t unitPtr, uintptr_t infoPtr) {
+    if (offsets::unit::userId_offset != 0) {
+        return mem.Read<uint32_t>(unitPtr + offsets::unit::userId_offset) == 0;
+    }
+    return !HasPlayerNick(infoPtr);
+}
+
 static std::mutex g_recoverMutex;
 static uint32_t g_cacheStaleStreak = 0;
 
@@ -315,6 +330,7 @@ void CacheThread() {
             ent.bbMin = mem.Read<Vector3>(ptr + offsets::unit::bbmin_offset);
             ent.bbMax = mem.Read<Vector3>(ptr + offsets::unit::bbmax_offset);
             ent.reloadProgress = mem.Read<float>(ptr + offsets::unit::visualReloadProgress_offset);
+            ent.isBot = IsUnitBot(ptr, infoPtr);
             ent.isValid = true;
 
             if (settings::bInternalsESP && !ent.isAir) {

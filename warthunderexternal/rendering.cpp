@@ -169,6 +169,8 @@ void RenderESP(ImDrawList* draw) {
             continue;
         }
 
+        if (!settings::bEspBots && ent.isBot) continue;
+
         ImVec2 screenPos;
         if (!ProjectToScreen(ent.position, screenPos, vm, vmAlt)) continue;
 

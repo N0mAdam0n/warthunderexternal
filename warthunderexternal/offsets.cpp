@@ -90,6 +90,12 @@ namespace offsets {
             {"m_UnitInfo",                 [](uintptr_t v) { unit::info_offset = static_cast<uint32_t>(v); }},
             {"m_TeamNum",                  [](uintptr_t v) { unit::unitArmyNo_offset = static_cast<uint32_t>(v); }},
             {"m_UnitState",                [](uintptr_t v) { unit::unitState_offset = static_cast<uint32_t>(v); }},
+            {"m_UserId",                   [](uintptr_t v) { unit::userId_offset = static_cast<uint32_t>(v); }},
+            {"m_PlayerId",                 [](uintptr_t v) { unit::userId_offset = static_cast<uint32_t>(v); }},
+            {"m_GaijinId",                 [](uintptr_t v) { unit::userId_offset = static_cast<uint32_t>(v); }},
+            {"m_PlayerNick",               [](uintptr_t v) { wtinfo::PlayerNick = static_cast<uint32_t>(v); }},
+            {"m_NickName",                 [](uintptr_t v) { wtinfo::PlayerNick = static_cast<uint32_t>(v); }},
+            {"m_UserName",                 [](uintptr_t v) { wtinfo::PlayerNick = static_cast<uint32_t>(v); }},
             {"m_VisualReload",             [](uintptr_t v) { unit::visualReloadProgress_offset = static_cast<uint32_t>(v); }},
             {"m_DamageModelCont",          [](uintptr_t v) { damage_model::ptrs[0] = v; damage_model::count[0] = v; }},
 

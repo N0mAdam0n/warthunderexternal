@@ -56,10 +56,12 @@ namespace offsets {
         inline uint32_t info_offset = 0x1010;
         inline uint32_t unitArmyNo_offset = 0x1000;
         inline uint32_t unitState_offset = 0xF80;
+        inline uint32_t userId_offset = 0xFF0;
         inline uint32_t visualReloadProgress_offset = 0xAD8;
     }
     namespace wtinfo {
         inline uint32_t FullName = 0x0018;
+        inline uint32_t PlayerNick = 0x0028;
     }
     namespace damage_model {
         inline uintptr_t ptrs[3] = { 0x1090, 0x58, 0xA0 };

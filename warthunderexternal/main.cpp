@@ -116,6 +116,7 @@ namespace settings {
     float targetHeightRatio = 0.5f;
 
     bool bEsp = true;
+    bool bEspBots = true;
     bool bBox = true;
     bool bBox3D = false;
     bool bFilledBox = true;
@@ -160,9 +161,6 @@ namespace settings {
 extern void CacheThread();
 extern void FastViewThread();
 extern void RenderESP(ImDrawList* draw);
-
-struct Particle { float x, y, dx, dy, size, alpha; };
-std::vector<Particle> g_Particles;
 
 struct Notification { std::string message; float timer; float alpha; };
 std::vector<Notification> g_Notifications;
@@ -257,8 +255,13 @@ void SetupStyle() {
     style.WindowRounding = 6.0f; style.ChildRounding = 6.0f; style.FrameRounding = 4.0f; style.GrabRounding = 4.0f; style.PopupRounding = 4.0f;
     style.ScrollbarRounding = 4.0f; style.TabRounding = 4.0f; style.WindowTitleAlign = ImVec2(0.5f, 0.5f);
     ImGuiIO& io = ImGui::GetIO(); ImFontConfig config; config.OversampleH = 2; config.OversampleV = 2;
-    if (std::ifstream("C:\\Windows\\Fonts\\segoeui.ttf").good()) io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 18.0f, &config);
-    else io.Fonts->AddFontDefault();
+    const ImWchar* glyphRanges = io.Fonts->GetGlyphRangesChineseSimplifiedCommon();
+    const char* fontPaths[] = { "C:\\Windows\\Fonts\\msyh.ttc", "C:\\Windows\\Fonts\\simhei.ttf", "C:\\Windows\\Fonts\\simsun.ttc", nullptr };
+    bool fontLoaded = false;
+    for (int i = 0; fontPaths[i]; ++i) {
+        if (std::ifstream(fontPaths[i]).good()) { io.Fonts->AddFontFromFileTTF(fontPaths[i], 18.0f, &config, glyphRanges); fontLoaded = true; break; }
+    }
+    if (!fontLoaded) io.Fonts->AddFontDefault();
 }
 
 static bool EnsureOverlayDimensions() {
@@ -406,14 +409,6 @@ bool InitOverlay() {
     UpdateWindow(g_hwndOverlay);
     SetForegroundWindow(g_hwndOverlay);
     BringWindowToTop(g_hwndOverlay);
-
-    for (int i = 0; i < 50; i++) {
-        g_Particles.push_back({
-            (float)(rand() % ScreenWidth), (float)(rand() % ScreenHeight),
-            ((rand() % 100) - 50) / 200.0f, 0,
-            (float)(rand() % 2 + 1), (float)(rand() % 100) / 100.0f
-        });
-    }
     return true;
 }
 
@@ -561,11 +556,6 @@ int main() {
         if (menuAlpha > 0.01f) {
             ImGui::GetStyle().Alpha = menuAlpha;
             bg->AddRectFilled(ImVec2(0, 0), ImVec2((float)ScreenWidth, (float)ScreenHeight), ImColor(0, 0, 0, (int)(150 * menuAlpha)));
-            for (auto& p : g_Particles) {
-                p.y -= 0.8f; p.x += p.dx; p.alpha -= 0.003f;
-                if (p.y < 0 || p.alpha <= 0.0f) { p.x = (float)(rand() % ScreenWidth); p.y = (float)ScreenHeight; p.dx = ((rand() % 100) - 50) / 200.0f; p.alpha = 1.0f; }
-                float ca = p.alpha * menuAlpha; bg->AddCircleFilled(ImVec2(p.x, p.y), p.size, ImColor(219, 44, 44, (int)(ca * 180))); UI::DrawGlow(bg, ImVec2(p.x, p.y), ImVec2(p.x, p.y), ImColor(219, 44, 44, (int)(ca * 50)), p.size * 2.0f, 5.0f);
-            }
             static ImVec2 menuPos(12.0f, 12.0f);
             ImGui::SetNextWindowSize(ImVec2(850, 500));
             ImGui::SetNextWindowPos(menuPos, ImGuiCond_Always);
@@ -584,101 +574,104 @@ int main() {
             UI::DrawGlow(draw, p, ImVec2(p.x + s.x, p.y + s.y), ImColor(219, 44, 44, (int)(255 * menuAlpha)), 12.0f, 20.0f);
             draw->AddRectFilled(p, ImVec2(p.x + s.x, p.y + s.y), ImColor(17, 17, 21, (int)(255 * menuAlpha)), 12.0f);
             draw->AddRectFilled(p, ImVec2(p.x + 180, p.y + s.y), ImColor(12, 12, 15, (int)(255 * menuAlpha)), 12.0f, ImDrawFlags_RoundCornersLeft);
-            ImGui::SetCursorPos(ImVec2(20, 30)); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, menuAlpha), "JANG"); ImGui::SetCursorPos(ImVec2(20, 60)); ImGui::TextDisabled("WAR THUNDER DMA");
+            ImGui::SetCursorPos(ImVec2(20, 30)); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, menuAlpha), "JANG"); ImGui::SetCursorPos(ImVec2(20, 60)); ImGui::TextDisabled("战争雷霆 DMA");
 
             if (settings::bEulaAccepted) {
                 ImGui::SetCursorPos(ImVec2(15, 100)); ImGui::BeginGroup();
-                if (UI::Tab("DASHBOARD", activeTab == 0)) activeTab = 0;
-                if (UI::Tab("COMBAT", activeTab == 1)) activeTab = 1;
-                if (UI::Tab("VISUALS", activeTab == 2)) activeTab = 2;
-                if (UI::Tab("EXPLOITS", activeTab == 3)) activeTab = 3;
-                if (UI::Tab("SETTINGS", activeTab == 4)) activeTab = 4;
+                if (UI::Tab("仪表盘", activeTab == 0)) activeTab = 0;
+                if (UI::Tab("战斗", activeTab == 1)) activeTab = 1;
+                if (UI::Tab("视觉", activeTab == 2)) activeTab = 2;
+                if (UI::Tab("功能", activeTab == 3)) activeTab = 3;
+                if (UI::Tab("设置", activeTab == 4)) activeTab = 4;
                 ImGui::EndGroup();
             }
-            ImGui::SetCursorPos(ImVec2(20, 460)); ImGui::TextDisabled("STATUS:"); ImGui::SameLine(); ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, menuAlpha), "INJECTED");
+            ImGui::SetCursorPos(ImVec2(20, 460)); ImGui::TextDisabled("状态:"); ImGui::SameLine(); ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, menuAlpha), "已注入");
             ImGui::SetCursorPos(ImVec2(200, 20)); ImGui::BeginChild("MainArea", ImVec2(630, 470), false, ImGuiWindowFlags_NoBackground);
 
             if (!settings::bEulaAccepted) {
-                ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "LICENSE AGREEMENT"); ImGui::Separator(); ImGui::Spacing();
-                ImGui::BeginChild("EULA_Text", ImVec2(0, 350), true); ImGui::TextWrapped("Welcome to JANG Client for War Thunder."); ImGui::Spacing(); ImGui::TextWrapped("Native Engine writes (Exploits tab) carry high risk. Use at your own risk."); ImGui::EndChild();
+                ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "许可协议"); ImGui::Separator(); ImGui::Spacing();
+                ImGui::BeginChild("EULA_Text", ImVec2(0, 350), true); ImGui::TextWrapped("欢迎使用 JANG 战争雷霆客户端。"); ImGui::Spacing(); ImGui::TextWrapped("原生引擎写入（功能页）风险较高，请自行承担使用后果。"); ImGui::EndChild();
                 ImGui::Spacing(); ImGui::SetCursorPosX((ImGui::GetWindowWidth() - 200) / 2);
-                if (UI::Button("I UNDERSTAND & ACCEPT", ImVec2(200, 40))) { settings::bEulaAccepted = true; std::ofstream f("license.dat"); f << "ACCEPTED"; f.close(); PushNotification("Welcome to Dashboard."); }
+                if (UI::Button("我已了解并接受", ImVec2(200, 40))) { settings::bEulaAccepted = true; std::ofstream f("license.dat"); f << "ACCEPTED"; f.close(); PushNotification("欢迎使用仪表盘。"); }
             }
             else {
                 if (activeTab == 0) {
-                    ImGui::Text("DASHBOARD"); ImGui::Separator(); ImGui::Spacing();
-                    ImGui::Text("Mode: DMA Secondary Machine");
-                    ImGui::Text("Device: %s", settings::dmaDevice.c_str());
-                    ImGui::Text("Target PID: %lu", mem.ProcessID);
-                    ImGui::Text("Base: 0x%llX", (unsigned long long)mem.BaseAddress);
-                    ImGui::Text("Game: %dx%d (%s)", mem.GameScreenWidth, mem.GameScreenHeight, mem.resolutionSource.c_str());
-                    ImGui::Text("ESP Window: %dx%d @ (%d,%d)", ScreenWidth, ScreenHeight, mem.LastRect.left, mem.LastRect.top);
-                    ImGui::Text("Draw FPS: %u | View: %u | Data: %u | Loop: %u | Cache: %ums",
+                    ImGui::Text("仪表盘"); ImGui::Separator(); ImGui::Spacing();
+                    ImGui::Text("模式: DMA 副机");
+                    ImGui::Text("设备: %s", settings::dmaDevice.c_str());
+                    ImGui::Text("目标进程: %lu", mem.ProcessID);
+                    ImGui::Text("基址: 0x%llX", (unsigned long long)mem.BaseAddress);
+                    ImGui::Text("游戏: %dx%d (%s)", mem.GameScreenWidth, mem.GameScreenHeight, mem.resolutionSource.c_str());
+                    ImGui::Text("ESP 窗口: %dx%d @ (%d,%d)", ScreenWidth, ScreenHeight, mem.LastRect.left, mem.LastRect.top);
+                    ImGui::Text("绘制帧率: %u | 视图: %u | 数据: %u | 循环: %u | 缓存: %ums",
                         perf::drawFps.load(), perf::viewFps.load(), perf::entityFps.load(), perf::loopFps.load(), perf::cacheMs.load());
-                    ImGui::Text("Kmbox: %s", Input::IsReady() ? "Connected" : (settings::bUseKmbox ? "Failed" : "Disabled"));
-                    if (!offsets::api_version.empty()) ImGui::Text("Offsets: v%s", offsets::api_version.c_str());
+                    ImGui::Text("Kmbox: %s", Input::IsReady() ? "已连接" : (settings::bUseKmbox ? "失败" : "已禁用"));
+                    if (!offsets::api_version.empty()) ImGui::Text("偏移: v%s", offsets::api_version.c_str());
                 }
                 else if (activeTab == 1) {
-                    ImGui::Columns(2, nullptr, false); ImGui::BeginChild("Aim", ImVec2(0, 0), true); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "AIM ASSIST"); ImGui::Separator();
-                    UI::Toggle("Memory Aimbot", &settings::bMemoryAim);
-                    if (settings::bMemoryAim) { int k = settings::aimKey; if (ImGui::Combo("Key", &k, "LMB\0RMB\0Alt\0Shift\0")) settings::aimKey = (k == 0 ? VK_LBUTTON : (k == 1 ? VK_RBUTTON : (k == 2 ? VK_MENU : VK_SHIFT))); UI::Slider("Smoothing", &settings::aimSmooth, 1.0f, 20.0f); UI::Slider("FOV", &settings::aimFov, 10.0f, 500.0f); UI::Toggle("Show FOV", &settings::bShowFovCircle); }
-                    ImGui::EndChild(); ImGui::NextColumn(); ImGui::BeginChild("Pred", ImVec2(0, 0), true); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "PREDICTION"); ImGui::Separator();
-                    UI::Toggle("Velocity Prediction", &settings::bPrediction); UI::Toggle("Bullet Drop", &settings::bBulletDrop); if (settings::bBulletDrop) UI::Slider("Grav", &settings::gravityScale, 1.05f, 1.15f, "%.4f"); ImGui::Separator(); ImGui::EndChild(); ImGui::Columns(1);
+                    ImGui::Columns(2, nullptr, false); ImGui::BeginChild("Aim", ImVec2(0, 0), true); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "瞄准辅助"); ImGui::Separator();
+                    UI::Toggle("内存自瞄", &settings::bMemoryAim);
+                    if (settings::bMemoryAim) { int k = settings::aimKey; if (ImGui::Combo("按键", &k, "左键\0右键\0Alt\0Shift\0")) settings::aimKey = (k == 0 ? VK_LBUTTON : (k == 1 ? VK_RBUTTON : (k == 2 ? VK_MENU : VK_SHIFT))); UI::Slider("平滑度", &settings::aimSmooth, 1.0f, 20.0f); UI::Slider("视野范围", &settings::aimFov, 10.0f, 500.0f); UI::Toggle("显示视野圈", &settings::bShowFovCircle); }
+                    ImGui::EndChild(); ImGui::NextColumn(); ImGui::BeginChild("Pred", ImVec2(0, 0), true); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "弹道预测"); ImGui::Separator();
+                    UI::Toggle("速度预测", &settings::bPrediction); UI::Toggle("子弹下坠", &settings::bBulletDrop); if (settings::bBulletDrop) UI::Slider("重力系数", &settings::gravityScale, 1.05f, 1.15f, "%.4f"); ImGui::Separator(); ImGui::EndChild(); ImGui::Columns(1);
                 }
                 else if (activeTab == 2) {
-                    ImGui::Columns(2, nullptr, false); ImGui::BeginChild("Esp", ImVec2(0, 0), true); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "PLAYER VISUALS"); ImGui::Separator();
-                    UI::Toggle("Master ESP", &settings::bEsp);
+                    ImGui::Columns(2, nullptr, false); ImGui::BeginChild("Esp", ImVec2(0, 0), true); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "玩家视觉"); ImGui::Separator();
+                    UI::Toggle("ESP 总开关", &settings::bEsp);
                     if (settings::bEsp) {
-                        UI::Toggle("2D Box", &settings::bBox);
-                        if (settings::bBox) { ImGui::Indent(15.0f); UI::Toggle("Filled Background", &settings::bFilledBox); ImGui::ColorEdit4("Color", settings::col_BoxVis, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel); ImGui::SameLine(); ImGui::Text("Box Color"); ImGui::Unindent(15.0f); }
-                        UI::Toggle("3D Box", &settings::bBox3D); UI::Toggle("Names", &settings::bName); UI::Toggle("Distance", &settings::bDistance); UI::Toggle("Reload Bar", &settings::bReloadBar); UI::Toggle("Facing", &settings::bFacing); UI::Toggle("Snaplines", &settings::bLines);
+                        ImGui::Indent(15.0f);
+                        UI::Toggle("BOT ESP", &settings::bEspBots);
+                        ImGui::Unindent(15.0f);
+                        UI::Toggle("2D 方框", &settings::bBox);
+                        if (settings::bBox) { ImGui::Indent(15.0f); UI::Toggle("填充背景", &settings::bFilledBox); ImGui::ColorEdit4("##BoxColor", settings::col_BoxVis, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel); ImGui::SameLine(); ImGui::Text("方框颜色"); ImGui::Unindent(15.0f); }
+                        UI::Toggle("3D 方框", &settings::bBox3D); UI::Toggle("名称", &settings::bName); UI::Toggle("距离", &settings::bDistance); UI::Toggle("装填进度", &settings::bReloadBar); UI::Toggle("朝向", &settings::bFacing); UI::Toggle("连线", &settings::bLines);
 
-                        UI::Toggle("Tank Internals (X-Ray)", &settings::bInternalsESP);
+                        UI::Toggle("坦克内部 (透视)", &settings::bInternalsESP);
                         if (settings::bInternalsESP) {
                             ImGui::Indent(15.0f);
-                            ImGui::Combo("Draw Mode", &settings::iInternalsMode, "3D Bounding Box\0Translucent Mesh\0");
-                            UI::Toggle("Show Part Names", &settings::bInternalsName);
+                            ImGui::Combo("绘制模式", &settings::iInternalsMode, "3D 边界框\0半透明网格\0");
+                            UI::Toggle("显示部件名称", &settings::bInternalsName);
                             ImGui::Unindent(15.0f);
                         }
                     }
-                    ImGui::EndChild(); ImGui::NextColumn(); ImGui::BeginChild("Env", ImVec2(0, 0), true); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "ENVIRONMENT"); ImGui::Separator();
-                    UI::Toggle("Missile ESP & MAWS", &settings::bMissileESP); 
-                    UI::Toggle("Bomb CCIP", &settings::bCCIP);
-                    UI::Toggle("Air Lead", &settings::bAirLead);
+                    ImGui::EndChild(); ImGui::NextColumn(); ImGui::BeginChild("Env", ImVec2(0, 0), true); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "环境"); ImGui::Separator();
+                    UI::Toggle("导弹 ESP 与告警", &settings::bMissileESP); 
+                    UI::Toggle("炸弹 CCIP", &settings::bCCIP);
+                    UI::Toggle("空中提前量", &settings::bAirLead);
                     ImGui::Separator(); ImGui::EndChild(); ImGui::Columns(1);
                 }
                 else if (activeTab == 3) {
                     ImGui::BeginChild("Exp", ImVec2(0, 0), true);
-                    ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "MEMORY WRITE FEATURES"); ImGui::Separator();
-                    ImGui::TextWrapped("All options below write to game memory. Disabled by default.");
+                    ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "内存写入功能"); ImGui::Separator();
+                    ImGui::TextWrapped("以下选项会写入游戏内存，默认全部关闭。");
                     ImGui::Spacing();
-                    if (UI::Toggle("Enable Memory Writes (Master)", &settings::bEnableMemoryWrites)) {
+                    if (UI::Toggle("启用内存写入 (总开关)", &settings::bEnableMemoryWrites)) {
                         if (!settings::bEnableMemoryWrites) {
                             settings::bMindControlActive = false;
                             shared::TargetHijackPtr = 0;
-                            PushNotification("Memory writes disabled.");
+                            PushNotification("内存写入已关闭。");
                         }
                     }
 
                     if (!settings::bEnableMemoryWrites) ImGui::BeginDisabled();
 
                     ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-                    ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "HUD OVERRIDES"); ImGui::Separator();
-                    UI::Toggle("Force Arcade Crosshair", &settings::bForceArcadeCrosshair);
-                    UI::Toggle("Force Air Lead UI", &settings::bForceAirLead);
-                    UI::Toggle("Force Tank ESP", &settings::bForceTankESP);
+                    ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "HUD 覆盖"); ImGui::Separator();
+                    UI::Toggle("强制街机准星", &settings::bForceArcadeCrosshair);
+                    UI::Toggle("强制空中提前量 UI", &settings::bForceAirLead);
+                    UI::Toggle("强制坦克 ESP", &settings::bForceTankESP);
                     ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 
-                    ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "UNIT MODIFIERS"); ImGui::Separator();
-                    UI::Toggle("Force NVD/Thermals", &settings::bForceThermals);
-                    UI::Toggle("Force Mid-Air Reload (Planes)", &settings::bMidAirReload);
-                    UI::Toggle("Ghost Tracks (No Collision/Debris Slow)", &settings::bGhostCollision);
-                    UI::Toggle("0-Cooldown Scout Spam", &settings::bSpamScout);
-                    UI::Toggle("Arcade Engine Multiplier", &settings::bThrustMult);
+                    ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "单位修改"); ImGui::Separator();
+                    UI::Toggle("强制夜视/热成像", &settings::bForceThermals);
+                    UI::Toggle("强制空中装填 (飞机)", &settings::bMidAirReload);
+                    UI::Toggle("幽灵履带 (无碰撞/碎片减速)", &settings::bGhostCollision);
+                    UI::Toggle("零冷却侦察 Spam", &settings::bSpamScout);
+                    UI::Toggle("街机引擎倍率", &settings::bThrustMult);
                     ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 
-                    ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "ENTITY HIJACKING"); ImGui::Separator();
-                    if (UI::Toggle("Enable Entity Hijack", &settings::bEnableEntityHijack)) {
+                    ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "实体劫持"); ImGui::Separator();
+                    if (UI::Toggle("启用实体劫持", &settings::bEnableEntityHijack)) {
                         if (!settings::bEnableEntityHijack) settings::bMindControlActive = false;
                     }
                     if (!settings::bEnableEntityHijack) ImGui::BeginDisabled();
@@ -690,10 +683,10 @@ int main() {
                     }
 
                     static int selectedEnt = -1;
-                    std::string preview = "Select Target...";
+                    std::string preview = "选择目标...";
                     if (selectedEnt >= 0 && selectedEnt < (int)uiEntities.size()) {
                         preview = std::string("[") +
-                            (uiEntities[selectedEnt].team == shared::LocalTeam ? "TEAM" : "ENEMY") +
+                            (uiEntities[selectedEnt].team == shared::LocalTeam ? "队友" : "敌方") +
                             "] " + uiEntities[selectedEnt].name;
                     }
                     else {
@@ -703,7 +696,7 @@ int main() {
                     if (ImGui::BeginCombo("##HijackCombo", preview.c_str())) {
                         for (int i = 0; i < (int)uiEntities.size(); i++) {
                             const std::string label = std::string("[") +
-                                (uiEntities[i].team == shared::LocalTeam ? "TEAM" : "ENEMY") +
+                                (uiEntities[i].team == shared::LocalTeam ? "队友" : "敌方") +
                                 "] " + uiEntities[i].name;
                             bool is_selected = (selectedEnt == i);
                             if (ImGui::Selectable(label.c_str(), is_selected)) {
@@ -716,22 +709,22 @@ int main() {
                     }
 
                     ImGui::Spacing();
-                    if (UI::Button("HIJACK SELECTED", ImVec2(180, 30))) {
+                    if (UI::Button("劫持选中", ImVec2(180, 30))) {
                         if (settings::bEnableMemoryWrites && settings::bEnableEntityHijack && shared::TargetHijackPtr != 0) {
                             settings::bMindControlActive = true;
-                            PushNotification("Hijacking Entity...");
+                            PushNotification("正在劫持实体...");
                         }
                     }
                     ImGui::SameLine();
-                    if (UI::Button("RETURN CONTROL", ImVec2(180, 30))) {
+                    if (UI::Button("归还控制", ImVec2(180, 30))) {
                         settings::bMindControlActive = false;
                         shared::TargetHijackPtr = 0;
                         selectedEnt = -1;
-                        PushNotification("Returned to Local Player.");
+                        PushNotification("已归还本地玩家控制。");
                     }
 
                     if (settings::bMindControlActive) {
-                        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "Currently Hijacking Entity!");
+                        ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "当前正在劫持实体！");
                     }
 
                     if (!settings::bEnableEntityHijack) ImGui::EndDisabled();
@@ -740,15 +733,15 @@ int main() {
                     ImGui::EndChild();
                 }
                 else if (activeTab == 4) {
-                    ImGui::BeginChild("Cfg", ImVec2(0, 0), true); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "SYSTEM & CONFIG"); ImGui::Separator();
-                    ImGui::TextDisabled("Edit dma_config.ini and restart to apply DMA/Kmbox/overlay settings.");
-                    ImGui::Text("Game: %dx%d (%s)", mem.GameScreenWidth, mem.GameScreenHeight, mem.resolutionSource.c_str());
-                    ImGui::Text("ESP Window: %dx%d @ (%d,%d)", ScreenWidth, ScreenHeight, settings::overlayX, settings::overlayY);
-                    ImGui::Text("Auto Resolution: %s", settings::overlayAutoResolution ? "ON" : "OFF");
+                    ImGui::BeginChild("Cfg", ImVec2(0, 0), true); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "系统与配置"); ImGui::Separator();
+                    ImGui::TextDisabled("修改 dma_config.ini 后重启以应用 DMA/Kmbox/覆盖层设置。");
+                    ImGui::Text("游戏: %dx%d (%s)", mem.GameScreenWidth, mem.GameScreenHeight, mem.resolutionSource.c_str());
+                    ImGui::Text("ESP 窗口: %dx%d @ (%d,%d)", ScreenWidth, ScreenHeight, settings::overlayX, settings::overlayY);
+                    ImGui::Text("自动分辨率: %s", settings::overlayAutoResolution ? "开启" : "关闭");
                     ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-                    UI::Toggle("Auto Team Detect", &settings::bAutoTeam); if (!settings::bAutoTeam) { ImGui::Indent(15.0f); ImGui::SliderInt("Manual ID", &settings::ManualTeam, 0, 4); ImGui::Unindent(15.0f); }
+                    UI::Toggle("自动识别队伍", &settings::bAutoTeam); if (!settings::bAutoTeam) { ImGui::Indent(15.0f); ImGui::SliderInt("手动队伍 ID", &settings::ManualTeam, 0, 4); ImGui::Unindent(15.0f); }
                     ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-                    if (UI::Button("Streamer Mode", ImVec2(-1, 40))) { settings::bStreamerMode = !settings::bStreamerMode; PushNotification("Streamer Mode Toggled"); } ImGui::Spacing(); if (UI::Button("UNLOAD", ImVec2(-1, 40))) { app::running.store(false, std::memory_order_relaxed); } ImGui::EndChild();
+                    if (UI::Button("主播模式", ImVec2(-1, 40))) { settings::bStreamerMode = !settings::bStreamerMode; PushNotification("主播模式已切换"); } ImGui::Spacing(); if (UI::Button("卸载", ImVec2(-1, 40))) { app::running.store(false, std::memory_order_relaxed); } ImGui::EndChild();
                 }
             }
             ImGui::EndChild(); ImGui::End();

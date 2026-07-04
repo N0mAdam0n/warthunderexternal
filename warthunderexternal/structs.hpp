@@ -47,11 +47,12 @@ struct CachedEntity {
     int team;
     float reloadProgress;
     bool isAir;
+    bool isBot;
     bool isValid;
 
     CachedEntity() :
         pointer(0), position{ 0,0,0 }, velocity{ 0,0,0 }, bbMin{ 0,0,0 }, bbMax{ 0,0,0 },
-        rotation{ 0 }, name(""), team(0), reloadProgress(0.0f), isAir(false), isValid(false) {
+        rotation{ 0 }, name(""), team(0), reloadProgress(0.0f), isAir(false), isBot(false), isValid(false) {
     }
 };
 
@@ -115,6 +116,7 @@ namespace settings {
     extern float targetHeightRatio;
 
     extern bool bEsp;
+    extern bool bEspBots;
     extern bool bBox;
     extern bool bBox3D;
     extern bool bFilledBox;

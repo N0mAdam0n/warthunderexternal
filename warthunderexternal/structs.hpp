@@ -117,6 +117,9 @@ namespace settings {
     extern bool bEspBots;
     extern bool bEspTeammates;
     extern bool bEspGround;
+    extern bool bForceChineseNames;
+    extern int espFontIndex;
+    extern float espFontSize;
     extern bool bBox;
     extern bool bBox3D;
     extern bool bFilledBox;

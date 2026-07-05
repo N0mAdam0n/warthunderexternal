@@ -62,6 +62,7 @@ namespace offsets {
     namespace wtinfo {
         inline uint32_t FullName = 0x0018;
         inline uint32_t PlayerNick = 0x0028;
+        inline uint32_t ShortName = 0x0020;  // offset in UnitInfo for display/short/localized name (Chinese in CN client); auto-fallback if no CJK chars
     }
     namespace damage_model {
         inline uintptr_t ptrs[3] = { 0x1090, 0x58, 0xA0 };

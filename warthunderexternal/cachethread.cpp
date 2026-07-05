@@ -375,9 +375,41 @@ void CacheThread() {
 
             uintptr_t infoPtr = mem.Read<uintptr_t>(ptr + offsets::unit::info_offset);
             if (mem.IsValidPtr(infoPtr)) {
-                uintptr_t namePtr = mem.Read<uintptr_t>(infoPtr + offsets::wtinfo::FullName);
-                if (mem.IsValidPtr(namePtr)) {
-                    std::string raw = mem.ReadString(namePtr, 64);
+                uintptr_t namePtr = 0;
+                std::string candidate;
+
+                // Prefer ShortName for Chinese/localized names
+                bool useShort = (offsets::wtinfo::ShortName != 0);
+                if (useShort) {
+                    namePtr = mem.Read<uintptr_t>(infoPtr + offsets::wtinfo::ShortName);
+                    if (mem.IsValidPtr(namePtr)) {
+                        candidate = mem.ReadString(namePtr, 64);
+                    }
+                }
+
+                // When not forcing Chinese, fallback to FullName if candidate has no Chinese chars
+                auto hasChinese = [](const std::string& s) {
+                    for (unsigned char c : s) if (c > 127) return true;
+                    return false;
+                };
+
+                if (!settings::bForceChineseNames) {
+                    if (!hasChinese(candidate) || candidate.empty()) {
+                        namePtr = mem.Read<uintptr_t>(infoPtr + offsets::wtinfo::FullName);
+                        if (mem.IsValidPtr(namePtr)) {
+                            candidate = mem.ReadString(namePtr, 64);
+                        }
+                    }
+                } else if (candidate.empty() && useShort) {
+                    // Force mode: if ShortName was invalid, still try FullName as last resort
+                    namePtr = mem.Read<uintptr_t>(infoPtr + offsets::wtinfo::FullName);
+                    if (mem.IsValidPtr(namePtr)) {
+                        candidate = mem.ReadString(namePtr, 64);
+                    }
+                }
+
+                if (!candidate.empty()) {
+                    std::string raw = candidate;
                     size_t slash = raw.find_last_of("/\\");
                     if (slash != std::string::npos) raw = raw.substr(slash + 1);
                     size_t ext = raw.find('.');

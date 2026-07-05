@@ -96,6 +96,9 @@ namespace offsets {
             {"m_PlayerNick",               [](uintptr_t v) { wtinfo::PlayerNick = static_cast<uint32_t>(v); }},
             {"m_NickName",                 [](uintptr_t v) { wtinfo::PlayerNick = static_cast<uint32_t>(v); }},
             {"m_UserName",                 [](uintptr_t v) { wtinfo::PlayerNick = static_cast<uint32_t>(v); }},
+            {"m_ShortName",                [](uintptr_t v) { wtinfo::ShortName = static_cast<uint32_t>(v); }},
+            {"m_DisplayName",              [](uintptr_t v) { wtinfo::ShortName = static_cast<uint32_t>(v); }},
+            {"m_Name",                     [](uintptr_t v) { wtinfo::ShortName = static_cast<uint32_t>(v); }},
             {"m_VisualReload",             [](uintptr_t v) { unit::visualReloadProgress_offset = static_cast<uint32_t>(v); }},
             {"m_DamageModelCont",          [](uintptr_t v) { damage_model::ptrs[0] = v; damage_model::count[0] = v; }},
 

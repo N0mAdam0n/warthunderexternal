@@ -33,6 +33,7 @@ int ScreenHeight = GetSystemMetrics(SM_CYSCREEN);
 HWND g_hwndOverlay = NULL;
 bool bShowMenu = true;
 static HANDLE g_instanceMutex = NULL;
+ImFont* g_espFont = nullptr;
 
 namespace app {
     std::atomic<bool> running{ true };
@@ -117,6 +118,9 @@ namespace settings {
     bool bEspBots = true;
     bool bEspTeammates = false;
     bool bEspGround = true;
+    bool bForceChineseNames = false;
+    int espFontIndex = 0;
+    float espFontSize = 18.0f;
     bool bBox = true;
     bool bBox3D = false;
     bool bFilledBox = true;
@@ -273,15 +277,57 @@ void SetupStyle() {
     ImGuiStyle& style = ImGui::GetStyle();
     style.WindowRounding = 6.0f; style.ChildRounding = 6.0f; style.FrameRounding = 4.0f; style.GrabRounding = 4.0f; style.PopupRounding = 4.0f;
     style.ScrollbarRounding = 4.0f; style.TabRounding = 4.0f; style.WindowTitleAlign = ImVec2(0.5f, 0.5f);
-    ImGuiIO& io = ImGui::GetIO(); ImFontConfig config; config.OversampleH = 2; config.OversampleV = 2;
-    const ImWchar* glyphRanges = io.Fonts->GetGlyphRangesChineseSimplifiedCommon();
-    const char* fontPaths[] = { "C:\\Windows\\Fonts\\msyh.ttc", "C:\\Windows\\Fonts\\simhei.ttf", "C:\\Windows\\Fonts\\simsun.ttc", nullptr };
-    bool fontLoaded = false;
-    for (int i = 0; fontPaths[i]; ++i) {
-        if (std::ifstream(fontPaths[i]).good()) { io.Fonts->AddFontFromFileTTF(fontPaths[i], 18.0f, &config, glyphRanges); fontLoaded = true; break; }
-    }
-    if (!fontLoaded) io.Fonts->AddFontDefault();
 }
+
+void LoadESPFont() {
+    ImGuiIO& io = ImGui::GetIO();
+    io.Fonts->Clear();
+    ImFontConfig config; config.OversampleH = 2; config.OversampleV = 2;
+    const ImWchar* glyphRanges = io.Fonts->GetGlyphRangesChineseSimplifiedCommon();
+
+    // Always load a reliable Chinese font first for the menu/UI (stable Chinese support)
+    const char* menuFontPath = "C:\\Windows\\Fonts\\msyh.ttc";
+    ImFont* menuFont = nullptr;
+    if (std::ifstream(menuFontPath).good()) {
+        menuFont = io.Fonts->AddFontFromFileTTF(menuFontPath, 18.0f, &config, glyphRanges);
+    } else {
+        menuFont = io.Fonts->AddFontDefault();
+    }
+
+    // Load separate font for ESP drawing only (user selectable, can be English or Chinese)
+    const char* fontPaths[] = {
+        // Chinese fonts
+        "C:\\Windows\\Fonts\\msyh.ttc",   // 微软雅黑
+        "C:\\Windows\\Fonts\\simhei.ttf", // 黑体
+        "C:\\Windows\\Fonts\\simsun.ttc", // 宋体
+        // English fonts (good compatibility and readability)
+        "C:\\Windows\\Fonts\\consola.ttf", // Consolas (monospace, excellent for numbers/distances)
+        "C:\\Windows\\Fonts\\arial.ttf",   // Arial (clean sans-serif)
+        "C:\\Windows\\Fonts\\segoeui.ttf", // Segoe UI (modern Windows default)
+        "C:\\Windows\\Fonts\\verdana.ttf", // Verdana (highly legible)
+        "C:\\Windows\\Fonts\\calibri.ttf", // Calibri (smooth, professional)
+        "C:\\Windows\\Fonts\\tahoma.ttf",  // Tahoma
+        "C:\\Windows\\Fonts\\cour.ttf",    // Courier New (monospace classic)
+        nullptr                            // fallback to menu font
+    };
+    int idx = settings::espFontIndex;
+    ImFont* espFont = nullptr;
+    if (idx >= 0 && idx < (int)(sizeof(fontPaths)/sizeof(fontPaths[0])) - 1 && fontPaths[idx] && std::ifstream(fontPaths[idx]).good()) {
+        espFont = io.Fonts->AddFontFromFileTTF(fontPaths[idx], settings::espFontSize, &config, glyphRanges);
+    }
+    if (!espFont) {
+        espFont = menuFont;
+    }
+    g_espFont = espFont;
+
+    io.Fonts->Build();
+
+    // Ensure DX11 font texture is updated for runtime font changes
+    ImGui_ImplDX11_InvalidateDeviceObjects();
+    ImGui_ImplDX11_CreateDeviceObjects();
+}
+
+bool g_fontReloadNeeded = true; // initial load
 
 static bool EnsureOverlayDimensions() {
     if (ScreenWidth < 100 || ScreenHeight < 100) {
@@ -424,6 +470,8 @@ bool InitOverlay() {
     ImGui_ImplWin32_Init(g_hwndOverlay);
     ImGui_ImplDX11_Init(g_pd3dDevice, g_pd3dDeviceContext);
     SetupStyle();
+    LoadESPFont();
+    g_fontReloadNeeded = false;
     SetWindowPos(g_hwndOverlay, HWND_TOPMOST, mem.LastRect.left, mem.LastRect.top, ScreenWidth, ScreenHeight, SWP_SHOWWINDOW);
     UpdateWindow(g_hwndOverlay);
     SetForegroundWindow(g_hwndOverlay);
@@ -569,11 +617,25 @@ int main() {
         lastSeenViewGen = viewGen;
         lastSeenEntityGen = entityGen;
 
+        // Dynamic font reload for ESP text (compatibility options + size)
+        static int lastFontIdx = -1;
+        static float lastFontSz = -1.0f;
+        if (settings::espFontIndex != lastFontIdx || settings::espFontSize != lastFontSz || g_fontReloadNeeded) {
+            LoadESPFont();
+            lastFontIdx = settings::espFontIndex;
+            lastFontSz = settings::espFontSize;
+            g_fontReloadNeeded = false;
+        }
+
         ImGui_ImplDX11_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame(); ImDrawList* bg = ImGui::GetBackgroundDrawList();
 
+        // Only use the selectable ESP font for overlay drawings (watermark, ESP elements, notifications).
+        // The ImGui menu always uses the first loaded Chinese font (msyh) to avoid ? for Chinese text.
+        if (g_espFont) ImGui::PushFont(g_espFont);
         DrawWatermark(bg);
         if (settings::bEulaAccepted) { RenderESP(bg); }
         RenderNotifications(bg);
+        if (g_espFont) ImGui::PopFont();
 
         float dt = ImGui::GetIO().DeltaTime;
         bool displayMenu = bShowMenu;
@@ -638,7 +700,9 @@ int main() {
                         settings::bPrediction ? "ON" : "OFF",
                         settings::bBulletDrop ? "ON" : "OFF",
                         settings::gravityScale);
-                    ImGui::Text("Kmbox: %s", Input::IsReady() ? "已连接" : (settings::bUseKmbox ? "失败" : "已禁用"));
+                    ImGui::Text("中文名: %s | Kmbox: %s", 
+                        settings::bForceChineseNames ? "强制" : "自动",
+                        Input::IsReady() ? "已连接" : (settings::bUseKmbox ? "失败" : "已禁用"));
                     if (!offsets::api_version.empty()) ImGui::Text("偏移: v%s", offsets::api_version.c_str());
                 }
                 else if (activeTab == 1) {
@@ -654,21 +718,32 @@ int main() {
                     UI::Toggle("ESP 总开关", &settings::bEsp);
                     if (settings::bEsp) {
                         ImGui::Indent(15.0f);
+
+                        // 过滤
+                        ImGui::TextDisabled("过滤");
                         UI::Toggle("BOT ESP", &settings::bEspBots);
                         UI::Toggle("队友 ESP", &settings::bEspTeammates);
-                        UI::Toggle("地面目标", &settings::bEspGround);
                         if (settings::bEspTeammates) {
                             ImGui::Indent(15.0f);
                             ImGui::ColorEdit4("##TeamBoxColor", settings::col_BoxTeam, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
                             ImGui::SameLine(); ImGui::Text("队友颜色");
                             ImGui::Unindent(15.0f);
                         }
-                        ImGui::Unindent(15.0f);
+                        UI::Toggle("地面目标", &settings::bEspGround);
+                        UI::Toggle("强制中文名称", &settings::bForceChineseNames);
+
+                        // 方框
+                        ImGui::TextDisabled("方框");
                         UI::Toggle("2D 方框", &settings::bBox);
                         if (settings::bBox) { ImGui::Indent(15.0f); UI::Toggle("填充背景", &settings::bFilledBox); ImGui::ColorEdit4("##BoxColor", settings::col_BoxVis, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel); ImGui::SameLine(); ImGui::Text("敌方颜色"); ImGui::Unindent(15.0f); }
-                        UI::Toggle("3D 方框", &settings::bBox3D); UI::Toggle("名称", &settings::bName); UI::Toggle("距离", &settings::bDistance); UI::Toggle("装填进度", &settings::bReloadBar); UI::Toggle("朝向", &settings::bFacing); UI::Toggle("连线", &settings::bLines);
-                        UI::Toggle("显示视野圈", &settings::bShowFovCircle);
+                        UI::Toggle("3D 方框", &settings::bBox3D);
 
+                        // 信息
+                        ImGui::TextDisabled("信息");
+                        UI::Toggle("名称", &settings::bName); UI::Toggle("距离", &settings::bDistance); UI::Toggle("装填进度", &settings::bReloadBar); UI::Toggle("朝向", &settings::bFacing); UI::Toggle("连线", &settings::bLines);
+
+                        // 高级
+                        ImGui::TextDisabled("高级");
                         UI::Toggle("坦克内部 (透视)", &settings::bInternalsESP);
                         if (settings::bInternalsESP) {
                             ImGui::Indent(15.0f);
@@ -676,6 +751,19 @@ int main() {
                             UI::Toggle("显示部件名称", &settings::bInternalsName);
                             ImGui::Unindent(15.0f);
                         }
+
+                        // 字体 (ESP 文字)
+                        ImGui::Separator();
+                        ImGui::TextDisabled("ESP 文字");
+                        const char* fontNames[] = {
+                            "微软雅黑", "黑体", "宋体",
+                            "Consolas", "Arial", "Segoe UI", "Verdana", "Calibri", "Tahoma", "Courier New",
+                            "默认"
+                        };
+                        ImGui::Combo("字体", &settings::espFontIndex, fontNames, IM_ARRAYSIZE(fontNames));
+                        UI::Slider("字号", &settings::espFontSize, 10.0f, 36.0f, "%.0f");
+
+                        ImGui::Unindent(15.0f);
                     }
                     ImGui::EndChild(); ImGui::NextColumn(); ImGui::BeginChild("Env", ImVec2(0, 0), true); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "环境"); ImGui::Separator();
                     UI::Toggle("导弹 ESP 与告警", &settings::bMissileESP); 

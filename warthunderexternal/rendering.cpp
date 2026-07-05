@@ -400,9 +400,7 @@ void RenderESP(ImDrawList* draw) {
                 draw->AddRect(ImVec2(mix - 1, miy - 1), ImVec2(max + 1, may + 1), ImColor(0, 0, 0), 0, 0, 3.0f);
                 draw->AddRect(ImVec2(mix, miy), ImVec2(max, may), boxColor);
             }
-            else {
-                draw->AddCircle(screenPos, 6.0f, boxColor, 12, 2.0f);
-            }
+            // Removed the fallback circle here. Position marker is now handled by the espMarkerStyle dot below when no prediction.
 
             if (settings::bBox3D && visibleCorners == 8) {
                 draw->AddLine(s[0], s[1], boxColor); draw->AddLine(s[1], s[2], boxColor);
@@ -472,31 +470,33 @@ void RenderESP(ImDrawList* draw) {
                 }
             } else if (settings::bEsp) {
                 // Simple position marker dot when ballistic prediction is OFF
+                // Use screenPos (current position projection) so it's not floating above the distance text
                 ImU32 dotCol = ImGui::ColorConvertFloat4ToU32(ImVec4(settings::col_ESPText[0], settings::col_ESPText[1], settings::col_ESPText[2], settings::col_ESPText[3]));
+                ImVec2 markerPos = screenPos;
                 switch (settings::espMarkerStyle) {
                     case 0: // small dot
-                        draw->AddCircleFilled(ps, 2.0f, dotCol);
+                        draw->AddCircleFilled(markerPos, 2.0f, dotCol);
                         break;
                     case 1: // solid circle
-                        draw->AddCircleFilled(ps, 5.0f, dotCol);
+                        draw->AddCircleFilled(markerPos, 5.0f, dotCol);
                         break;
                     case 2: // hollow circle
-                        draw->AddCircle(ps, 5.0f, dotCol, 12, 1.5f);
+                        draw->AddCircle(markerPos, 5.0f, dotCol, 12, 1.5f);
                         break;
                     case 3: // diamond
                         draw->AddQuadFilled(
-                            ImVec2(ps.x, ps.y - 4),
-                            ImVec2(ps.x + 4, ps.y),
-                            ImVec2(ps.x, ps.y + 4),
-                            ImVec2(ps.x - 4, ps.y),
+                            ImVec2(markerPos.x, markerPos.y - 4),
+                            ImVec2(markerPos.x + 4, markerPos.y),
+                            ImVec2(markerPos.x, markerPos.y + 4),
+                            ImVec2(markerPos.x - 4, markerPos.y),
                             dotCol
                         );
                         break;
                     case 4: // small square
-                        draw->AddRectFilled(ImVec2(ps.x - 3, ps.y - 3), ImVec2(ps.x + 3, ps.y + 3), dotCol);
+                        draw->AddRectFilled(ImVec2(markerPos.x - 3, markerPos.y - 3), ImVec2(markerPos.x + 3, markerPos.y + 3), dotCol);
                         break;
                     default:
-                        draw->AddCircleFilled(ps, 2.0f, dotCol);
+                        draw->AddCircleFilled(markerPos, 2.0f, dotCol);
                         break;
                 }
             }

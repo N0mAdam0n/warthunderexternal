@@ -950,6 +950,7 @@ int main() {
                         ImGui::SameLine(); ImGui::Text("文字颜色");
 
                         ImGui::Combo("位置标记样式", &settings::espMarkerStyle, "小点\0实心圆\0空心圆\0菱形\0小方块\0", 5);
+                        ImGui::TextDisabled("(仅在未开启弹道预测时显示，用于标记目标位置)");
 
                         ImGui::Unindent(15.0f);
                     }

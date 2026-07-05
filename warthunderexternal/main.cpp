@@ -721,6 +721,14 @@ int main() {
         std::cout << "[!] Using built-in offset defaults." << std::endl;
     }
 
+    // Wait briefly for cGame to become valid (in-match state), so reading starts reliably
+    std::cout << " [>] Waiting for game data (cGame)... ";
+    for (int i = 0; i < 30 && !mem.IsGameReady(); ++i) {  // up to ~3s
+        if (GetAsyncKeyState(VK_END) & 1) break;
+        Sleep(100);
+    }
+    std::cout << (mem.IsGameReady() ? "OK" : "timeout (enter match?)") << std::endl;
+
     std::cout << "[>] Detecting game resolution..." << std::endl;
     mem.DetectGameResolution();
     std::cout << " [+] Game resolution: " << mem.GameScreenWidth << "x" << mem.GameScreenHeight

@@ -257,17 +257,18 @@ void CacheThread() {
         if (!mem.BaseAddress) {
             TryRecoverGameData();
             shared::gameLinkOk.store(false, std::memory_order_relaxed);
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
             continue;
         }
 
         const uintptr_t cGame = mem.ResolveCGamePtr();
         if (!mem.IsValidPtr(cGame)) {
             shared::gameLinkOk.store(false, std::memory_order_relaxed);
-            if (++g_cacheStaleStreak > 10) {
+            if (++g_cacheStaleStreak > 5) {  // more aggressive recovery
                 TryRecoverGameData();
+                g_cacheStaleStreak = 0;
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));  // faster retry to detect match entry
             continue;
         }
         g_cacheStaleStreak = 0;
@@ -641,6 +642,15 @@ void CacheThread() {
             std::memory_order_relaxed
         );
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(8));
+        // Adaptive sleep: target ~5ms loop for good real-time without overloading DMA
+        auto now = std::chrono::steady_clock::now();
+        auto taken = std::chrono::duration_cast<std::chrono::milliseconds>(now - iterationStart).count();
+        int target = 5;
+        int64_t sleep_ms = target - taken;
+        if (sleep_ms > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(sleep_ms));
+        } else {
+            std::this_thread::yield();
+        }
     }
 }

@@ -66,9 +66,13 @@ static Vector3 PredictEntityPos(const CachedEntity& ent) {
     const uint64_t cacheTick = shared::entityCacheTick.load(std::memory_order_relaxed);
     if (cacheTick == 0) return ent.position;
 
-    float ageSec = (GetTickCount64() - cacheTick) / 1000.0f;
+    uint64_t now = GetTickCount64();
+    float ageSec = (now - cacheTick) / 1000.0f;
     if (ageSec < 0.0f) ageSec = 0.0f;
-    if (ageSec > 0.12f) ageSec = 0.12f;
+
+    // Tighter cap for high-speed entities to keep prediction accurate; frequent updates (2ms) make long extrapolation unnecessary
+    float maxAge = ent.isAir ? 0.08f : 0.04f;
+    if (ageSec > maxAge) ageSec = maxAge;
 
     const Vector3 vel = SanitizeVelocity(ent.velocity, ent.isAir);
     const Vector3 predicted = ent.position + vel * ageSec;
@@ -230,11 +234,47 @@ void RenderESP(ImDrawList* draw) {
 
         if (!ent.isAir && !settings::bEspGround) continue;
 
+        bool predictionActive = settings::bPrediction || settings::bBulletDrop || settings::bAirLead;
+
         ImVec2 screenPos;
         if (!ProjectToScreen(ent.position, screenPos, vm, vmAlt)) continue;
 
         CachedEntity drawEnt = ent;
         drawEnt.position = PredictEntityPos(ent);
+
+        if (!predictionActive && settings::bEsp) {
+            // Simple position marker when no ballistic prediction - use predicted position for real-time follow
+            ImVec2 markerPos;
+            if (ProjectToScreen(drawEnt.position, markerPos, vm, vmAlt)) {
+                ImU32 dotCol = ImGui::ColorConvertFloat4ToU32(ImVec4(settings::col_ESPText[0], settings::col_ESPText[1], settings::col_ESPText[2], settings::col_ESPText[3]));
+                switch (settings::espMarkerStyle) {
+                    case 0: // small dot
+                        draw->AddCircleFilled(markerPos, 2.0f, dotCol);
+                        break;
+                    case 1: // solid circle
+                        draw->AddCircleFilled(markerPos, 5.0f, dotCol);
+                        break;
+                    case 2: // hollow circle
+                        draw->AddCircle(markerPos, 5.0f, dotCol, 12, 1.5f);
+                        break;
+                    case 3: // diamond
+                        draw->AddQuadFilled(
+                            ImVec2(markerPos.x, markerPos.y - 4),
+                            ImVec2(markerPos.x + 4, markerPos.y),
+                            ImVec2(markerPos.x, markerPos.y + 4),
+                            ImVec2(markerPos.x - 4, markerPos.y),
+                            dotCol
+                        );
+                        break;
+                    case 4: // small square
+                        draw->AddRectFilled(ImVec2(markerPos.x - 3, markerPos.y - 3), ImVec2(markerPos.x + 3, markerPos.y + 3), dotCol);
+                        break;
+                    default:
+                        draw->AddCircleFilled(markerPos, 2.0f, dotCol);
+                        break;
+                }
+            }
+        }
 
         float distMeters = 0.0f;
         if (hasLocalUnit) {
@@ -453,8 +493,6 @@ void RenderESP(ImDrawList* draw) {
 
         ImVec2 ps;
         if (ProjectToScreen(lead.aimPoint, ps, vm, vmAlt)) {
-            const bool predictionActive = settings::bPrediction || settings::bBulletDrop || settings::bAirLead;
-
             if (predictionActive) {
                 // Draw ballistic prediction/lead marker (only when prediction enabled)
                 ImVec2 curScreen;
@@ -467,37 +505,6 @@ void RenderESP(ImDrawList* draw) {
                 } else {
                     draw->AddCircle(ps, 6.0f, ImColor(255, 220, 50, 220), 12, 1.5f);
                     draw->AddCircleFilled(ps, 2.0f, ImColor(255, 255, 80, 255));
-                }
-            } else if (settings::bEsp) {
-                // Simple position marker dot when ballistic prediction is OFF
-                // Use screenPos (current position projection) so it's not floating above the distance text
-                ImU32 dotCol = ImGui::ColorConvertFloat4ToU32(ImVec4(settings::col_ESPText[0], settings::col_ESPText[1], settings::col_ESPText[2], settings::col_ESPText[3]));
-                ImVec2 markerPos = screenPos;
-                switch (settings::espMarkerStyle) {
-                    case 0: // small dot
-                        draw->AddCircleFilled(markerPos, 2.0f, dotCol);
-                        break;
-                    case 1: // solid circle
-                        draw->AddCircleFilled(markerPos, 5.0f, dotCol);
-                        break;
-                    case 2: // hollow circle
-                        draw->AddCircle(markerPos, 5.0f, dotCol, 12, 1.5f);
-                        break;
-                    case 3: // diamond
-                        draw->AddQuadFilled(
-                            ImVec2(markerPos.x, markerPos.y - 4),
-                            ImVec2(markerPos.x + 4, markerPos.y),
-                            ImVec2(markerPos.x, markerPos.y + 4),
-                            ImVec2(markerPos.x - 4, markerPos.y),
-                            dotCol
-                        );
-                        break;
-                    case 4: // small square
-                        draw->AddRectFilled(ImVec2(markerPos.x - 3, markerPos.y - 3), ImVec2(markerPos.x + 3, markerPos.y + 3), dotCol);
-                        break;
-                    default:
-                        draw->AddCircleFilled(markerPos, 2.0f, dotCol);
-                        break;
                 }
             }
 

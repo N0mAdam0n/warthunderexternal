@@ -40,6 +40,28 @@ Vector3 TransformVec4x4(const Vector3& v, const Matrix4x4& mat) {
     };
 }
 
+static bool IsFiniteVec3(const Vector3& v) {
+    return !std::isnan(v.x) && !std::isnan(v.y) && !std::isnan(v.z)
+        && !std::isinf(v.x) && !std::isinf(v.y) && !std::isinf(v.z);
+}
+
+static bool IsSaneUnitPosition(const Vector3& pos) {
+    return !std::isnan(pos.x) && !std::isnan(pos.y) && !std::isnan(pos.z)
+        && !std::isinf(pos.x) && !std::isinf(pos.y) && !std::isinf(pos.z)
+        && (std::fabs(pos.x) > 0.01f || std::fabs(pos.y) > 0.01f || std::fabs(pos.z) > 0.01f);
+}
+
+static Vector3 SanitizeVelocity(const Vector3& vel, bool isAir) {
+    if (!IsFiniteVec3(vel)) return { 0, 0, 0 };
+
+    const float vLen = vel.Length();
+    const float maxVel = isAir ? 900.0f : 120.0f;
+    if (vLen > maxVel && vLen > 0.001f) {
+        return vel * (maxVel / vLen);
+    }
+    return vel;
+}
+
 static Vector3 PredictEntityPos(const CachedEntity& ent) {
     const uint64_t cacheTick = shared::entityCacheTick.load(std::memory_order_relaxed);
     if (cacheTick == 0) return ent.position;
@@ -48,23 +70,63 @@ static Vector3 PredictEntityPos(const CachedEntity& ent) {
     if (ageSec < 0.0f) ageSec = 0.0f;
     if (ageSec > 0.12f) ageSec = 0.12f;
 
-    Vector3 vel = ent.velocity;
-    if (std::isnan(vel.x) || std::isnan(vel.y) || std::isnan(vel.z)
-        || std::isinf(vel.x) || std::isinf(vel.y) || std::isinf(vel.z)) {
-        return ent.position;
-    }
-
-    const float vLen = vel.Length();
-    const float maxVel = ent.isAir ? 900.0f : 120.0f;
-    if (vLen > maxVel && vLen > 0.001f) {
-        vel = vel * (maxVel / vLen);
-    }
-
+    const Vector3 vel = SanitizeVelocity(ent.velocity, ent.isAir);
     const Vector3 predicted = ent.position + vel * ageSec;
-    if (std::isnan(predicted.x) || std::isnan(predicted.y) || std::isnan(predicted.z)) {
-        return ent.position;
-    }
+    if (!IsFiniteVec3(predicted)) return ent.position;
     return predicted;
+}
+
+struct BallisticLead {
+    Vector3 aimPoint{};
+    float flightTime = 0.0f;
+    float range3d = 0.0f;
+};
+
+static BallisticLead SolveBallisticLead(
+    const Vector3& shooterPos,
+    const Vector3& targetPos,
+    const Vector3& targetVel,
+    float bulletSpeed,
+    bool isAir,
+    bool enableLead,
+    bool enableDrop,
+    float gravityScale)
+{
+    BallisticLead result{};
+    result.aimPoint = targetPos;
+    if (!IsSaneUnitPosition(shooterPos) || !IsFiniteVec3(targetPos) || bulletSpeed < 10.0f) {
+        return result;
+    }
+
+    const Vector3 vel = SanitizeVelocity(targetVel, isAir);
+    const float g = 9.81f * gravityScale;
+    const bool leadOn = enableLead && vel.Length() > 0.05f;
+    const bool dropOn = enableDrop;
+
+    Vector3 aim = targetPos;
+    float t = 0.0f;
+
+    // Improved iterative solver for lead + drop
+    for (int pass = 0; pass < 3; ++pass) {
+        const float dist = shooterPos.Distance(aim);
+        if (dist < 0.5f) break;
+
+        t = dist / bulletSpeed;
+        if (t <= 0.0f || !std::isfinite(t)) break;
+
+        aim = targetPos;
+        if (leadOn) {
+            aim = aim + vel * t;
+        }
+        if (dropOn) {
+            aim.y += 0.5f * g * t * t;
+        }
+    }
+
+    result.aimPoint = aim;
+    result.flightTime = t;
+    result.range3d = shooterPos.Distance(targetPos);
+    return result;
 }
 
 bool IsAimingAtMe(const Vector3& enemyPos, const Vector3& localPos, const Matrix3x3& enemyRot) {
@@ -90,12 +152,6 @@ void MoveMouse(float x, float y) {
         static_cast<int>(dx / appliedSmooth),
         static_cast<int>(dy / appliedSmooth)
     );
-}
-
-static bool IsSaneUnitPosition(const Vector3& pos) {
-    return !std::isnan(pos.x) && !std::isnan(pos.y) && !std::isnan(pos.z)
-        && !std::isinf(pos.x) && !std::isinf(pos.y) && !std::isinf(pos.z)
-        && (std::fabs(pos.x) > 0.01f || std::fabs(pos.y) > 0.01f || std::fabs(pos.z) > 0.01f);
 }
 
 static float CalcHorizontalRange(const Vector3& target, const Vector3& localUnit) {
@@ -162,14 +218,15 @@ void RenderESP(ImDrawList* draw) {
     ImVec2 bestTarget = { 0,0 }; float minDist = settings::aimFov;
 
     for (const auto& ent : localEntities) {
-        if (settings::bAutoTeam) {
-            if (lTeam > 0 && ent.team == lTeam) continue;
-        }
-        else if (ent.team == settings::ManualTeam) {
-            continue;
-        }
+        const bool isTeammate = settings::bAutoTeam
+            ? (lTeam > 0 && ent.team == lTeam)
+            : (ent.team == settings::ManualTeam);
+
+        if (isTeammate && !settings::bEspTeammates) continue;
 
         if (!settings::bEspBots && ent.isBot) continue;
+
+        if (!ent.isAir && !settings::bEspGround) continue;
 
         ImVec2 screenPos;
         if (!ProjectToScreen(ent.position, screenPos, vm, vmAlt)) continue;
@@ -187,7 +244,8 @@ void RenderESP(ImDrawList* draw) {
             distMeters = clipW;
         }
 
-        ImU32 boxColor = ImGui::ColorConvertFloat4ToU32(*(ImVec4*)settings::col_BoxVis);
+        ImU32 boxColor = ImGui::ColorConvertFloat4ToU32(
+            isTeammate ? *(ImVec4*)settings::col_BoxTeam : *(ImVec4*)settings::col_BoxVis);
 
         Vector3 c[8] = { {ent.bbMin.x, ent.bbMin.y, ent.bbMin.z}, {ent.bbMax.x, ent.bbMin.y, ent.bbMin.z}, {ent.bbMax.x, ent.bbMax.y, ent.bbMin.z}, {ent.bbMin.x, ent.bbMax.y, ent.bbMin.z}, {ent.bbMin.x, ent.bbMin.y, ent.bbMax.z}, {ent.bbMax.x, ent.bbMin.y, ent.bbMax.z}, {ent.bbMax.x, ent.bbMax.y, ent.bbMax.z}, {ent.bbMin.x, ent.bbMax.y, ent.bbMax.z} };
         ImVec2 s[8] = {};
@@ -375,25 +433,41 @@ void RenderESP(ImDrawList* draw) {
             }
         }
 
-        // prediction math
-        float h = ent.bbMax.y - ent.bbMin.y;
-        Vector3 targetWeak = { (ent.bbMin.x + ent.bbMax.x) / 2.0f, ent.bbMin.y + (h * settings::targetHeightRatio), (ent.bbMin.z + ent.bbMax.z) / 2.0f };
-        Vector3 tReal = TransformVec(targetWeak, drawEnt.rotation, drawEnt.position);
+        const float h = ent.bbMax.y - ent.bbMin.y;
+        const Vector3 targetWeak = {
+            (ent.bbMin.x + ent.bbMax.x) * 0.5f,
+            ent.bbMin.y + (h * settings::targetHeightRatio),
+            (ent.bbMin.z + ent.bbMax.z) * 0.5f
+        };
+        const Vector3 targetWorld = TransformVec(targetWeak, drawEnt.rotation, drawEnt.position);
+        const Vector3 shooterPos = hasLocalUnit ? localUnitPos : lPos;
 
-        const float rangeForPrediction = (clipW > 0.1f) ? clipW : distMeters;
-        float fTime = bVel > 10.0f ? rangeForPrediction / bVel : 0.0f;
-
-        if (settings::bPrediction || settings::bAirLead) {
-            tReal = tReal + (ent.velocity * fTime);
-        }
-
-        if (settings::bBulletDrop && bVel > 10.0f) {
-            tReal.y += 0.5f * (9.81f * settings::gravityScale) * (fTime * fTime);
-        }
+        const bool leadOn = settings::bPrediction || settings::bAirLead;
+        const BallisticLead lead = SolveBallisticLead(
+            shooterPos, targetWorld, ent.velocity, bVel, ent.isAir,
+            leadOn, settings::bBulletDrop, settings::gravityScale);
 
         ImVec2 ps;
-        if (ProjectToScreen(tReal, ps, vm, vmAlt)) {
-            if (settings::bEsp) {
+        if (ProjectToScreen(lead.aimPoint, ps, vm, vmAlt)) {
+            const bool predictionActive = settings::bPrediction || settings::bBulletDrop || settings::bAirLead;
+
+            // Draw ballistic prediction marker. Decoupled from full ESP so "弹道预测" in 战斗 tab is visible
+            // even if ESP 总开关 is off. This makes the feature demonstrably work.
+            if (predictionActive) {
+                // Draw a distinct prediction/lead point + optional lead line from current pos
+                ImVec2 curScreen;
+                if (ProjectToScreen(drawEnt.position, curScreen, vm, vmAlt)) {
+                    draw->AddLine(curScreen, ps, ImColor(255, 220, 50, 160), 1.0f);
+                }
+                if (ent.isAir) {
+                    draw->AddCircle(ps, 9.0f, ImColor(255, 80, 80, 230), 12, 2.0f);
+                    draw->AddCircleFilled(ps, 2.5f, ImColor(255, 100, 100, 255));
+                } else {
+                    draw->AddCircle(ps, 6.0f, ImColor(255, 220, 50, 220), 12, 1.5f);
+                    draw->AddCircleFilled(ps, 2.0f, ImColor(255, 255, 80, 255));
+                }
+            } else if (settings::bEsp) {
+                // Original behavior when only ESP (no explicit prediction) is on
                 if (ent.isAir) {
                     draw->AddCircle(ps, 8.0f, ImColor(219, 44, 44, 255), 12, 2.0f);
                     draw->AddCircleFilled(ps, 2.0f, ImColor(219, 44, 44, 255));
@@ -402,8 +476,9 @@ void RenderESP(ImDrawList* draw) {
                     draw->AddCircleFilled(ps, 3.0f, ImColor(255, 255, 0));
                 }
             }
+
             float cx = ps.x - (float)ScreenWidth / 2, cy = ps.y - (float)ScreenHeight / 2, cxDist = std::sqrt(cx * cx + cy * cy);
-            if (cxDist < minDist) { minDist = cxDist; bestTarget = ps; }
+            if (!isTeammate && cxDist < minDist) { minDist = cxDist; bestTarget = ps; }
         }
     }
 

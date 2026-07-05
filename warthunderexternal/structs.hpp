@@ -78,9 +78,8 @@ namespace shared {
     extern Matrix4x4 ViewMatrixAlt;
     extern Vector3 LocalPos;
     extern Vector3 LocalUnitPos;
-    extern Vector3 NativePredictionPos;
     extern Vector3 CCIPPos;
-    extern float LiveVelocity;
+    extern float LiveVelocity;  // initialized to 800 in main.cpp, updated from game ballistics via DMA
     extern int LocalTeam;
     extern std::mutex DataMutex;
     extern std::atomic<uintptr_t> TargetHijackPtr;
@@ -112,11 +111,12 @@ namespace settings {
     extern bool bPrediction;
     extern bool bBulletDrop;
     extern float gravityScale;
-    extern bool bUseNativePredictionAim;
     extern float targetHeightRatio;
 
     extern bool bEsp;
     extern bool bEspBots;
+    extern bool bEspTeammates;
+    extern bool bEspGround;
     extern bool bBox;
     extern bool bBox3D;
     extern bool bFilledBox;
@@ -155,5 +155,6 @@ namespace settings {
     extern std::atomic<bool> bMindControlActive;
 
     extern float col_BoxVis[4];
+    extern float col_BoxTeam[4];
     extern float col_Fov[4];
 }

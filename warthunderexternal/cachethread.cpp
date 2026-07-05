@@ -21,7 +21,6 @@ namespace shared {
     extern Matrix4x4 ViewMatrixAlt;
     extern Vector3 LocalPos;
     extern Vector3 LocalUnitPos;
-    extern Vector3 NativePredictionPos;
     extern Vector3 CCIPPos;
     extern float LiveVelocity;
     extern int LocalTeam;
@@ -69,6 +68,74 @@ static bool IsUnitBot(uintptr_t unitPtr, uintptr_t infoPtr) {
         return mem.Read<uint32_t>(unitPtr + offsets::unit::userId_offset) == 0;
     }
     return !HasPlayerNick(infoPtr);
+}
+
+static uintptr_t ResolveLocalPlayerMgr() {
+    if (!mem.BaseAddress) return 0;
+
+    const uintptr_t slot = mem.Read<uintptr_t>(mem.BaseAddress + offsets::localplayer_offset);
+    if (!mem.IsValidPtr(slot)) return 0;
+
+    const uintptr_t unitDirect = mem.Read<uintptr_t>(slot + offsets::localplayer::localunit_offset);
+    if (mem.IsValidPtr(unitDirect)) return slot;
+
+    const uintptr_t indirect = mem.Read<uintptr_t>(slot);
+    if (!mem.IsValidPtr(indirect)) return 0;
+
+    const uintptr_t unitIndirect = mem.Read<uintptr_t>(indirect + offsets::localplayer::localunit_offset);
+    if (mem.IsValidPtr(unitIndirect)) return indirect;
+
+    return 0;
+}
+
+static uintptr_t ResolveLocalUnitPtr() {
+    const uintptr_t mgr = ResolveLocalPlayerMgr();
+    if (!mem.IsValidPtr(mgr)) return 0;
+    const uintptr_t unit = mem.Read<uintptr_t>(mgr + offsets::localplayer::localunit_offset);
+    return mem.IsValidPtr(unit) ? unit : 0;
+}
+
+static bool TryReadUnitTeam(uintptr_t unitPtr, int& outTeam) {
+    if (!mem.IsValidPtr(unitPtr)) return false;
+    const uint8_t team = mem.Read<uint8_t>(unitPtr + offsets::unit::unitArmyNo_offset);
+    if (team == 0) return false;
+    outTeam = team;
+    return true;
+}
+
+static bool TryResolveTeamFromPosition(const std::vector<uintptr_t>& ptrs, int count, const Vector3& refPos, int& outTeam) {
+    if (!IsSaneUnitPosition(refPos)) return false;
+
+    constexpr float kMaxDist = 120.0f;
+    const float maxDistSq = kMaxDist * kMaxDist;
+    float bestDistSq = maxDistSq;
+    int bestTeam = -1;
+
+    for (int i = 0; i < count; i++) {
+        const uintptr_t ptr = ptrs[i];
+        if (!mem.IsValidPtr(ptr)) continue;
+
+        const short state = mem.Read<short>(ptr + offsets::unit::unitState_offset);
+        if (state < 0 || state > 3) continue;
+
+        const Vector3 pos = mem.Read<Vector3>(ptr + offsets::unit::position_offset);
+        if (!IsSaneUnitPosition(pos)) continue;
+
+        const uint8_t team = mem.Read<uint8_t>(ptr + offsets::unit::unitArmyNo_offset);
+        if (team == 0) continue;
+
+        const float dx = pos.x - refPos.x;
+        const float dz = pos.z - refPos.z;
+        const float distSq = dx * dx + dz * dz;
+        if (distSq < bestDistSq) {
+            bestDistSq = distSq;
+            bestTeam = team;
+        }
+    }
+
+    if (bestTeam <= 0) return false;
+    outTeam = bestTeam;
+    return true;
 }
 
 static std::mutex g_recoverMutex;
@@ -151,9 +218,9 @@ void FastViewThread() {
             ccip = mem.Read<Vector3>(ballisticsPtr + offsets::ballistic::bomb_impact_point);
         }
 
-        uintptr_t localMgr = mem.Read<uintptr_t>(mem.BaseAddress + offsets::localplayer_offset);
+        const uintptr_t localMgr = ResolveLocalPlayerMgr();
         if (mem.IsValidPtr(localMgr)) {
-            uintptr_t localUnit = mem.Read<uintptr_t>(localMgr + offsets::localplayer::localunit_offset);
+            const uintptr_t localUnit = mem.Read<uintptr_t>(localMgr + offsets::localplayer::localunit_offset);
             if (mem.IsValidPtr(localUnit)) {
                 Vector3 unitPos = mem.Read<Vector3>(localUnit + offsets::unit::position_offset);
                 if (IsSaneUnitPosition(unitPos)) {
@@ -220,25 +287,20 @@ void CacheThread() {
             }
         }
 
-        uintptr_t localMgr = mem.Read<uintptr_t>(mem.BaseAddress + offsets::localplayer_offset);
-        if (mem.IsValidPtr(localMgr)) {
-            if (!settings::bMindControlActive || cachedRealLocalUnit == 0) {
-                const uintptr_t tempUnit = mem.Read<uintptr_t>(localMgr + offsets::localplayer::localunit_offset);
-                if (mem.IsValidPtr(tempUnit)) {
-                    cachedRealLocalUnit = tempUnit;
-                }
-                else {
-                    cachedRealLocalUnit = 0;
-                }
-            }
+        uintptr_t localMgr = ResolveLocalPlayerMgr();
+        if (!settings::bMindControlActive || cachedRealLocalUnit == 0) {
+            cachedRealLocalUnit = ResolveLocalUnitPtr();
         }
-        else {
-            cachedRealLocalUnit = 0;
+        if (!mem.IsValidPtr(localMgr)) {
+            localMgr = ResolveLocalPlayerMgr();
         }
 
         static Vector3 lastCachedLocalPos = { 0, 0, 0 };
         Vector3 trueLocalPos = lastCachedLocalPos;
         Vector3 trueLocalVel = { 0,0,0 };
+        int lTeam = -1;
+        bool teamConfirmed = false;
+
         if (mem.IsValidPtr(cachedRealLocalUnit)) {
             Vector3 unitPos = mem.Read<Vector3>(cachedRealLocalUnit + offsets::unit::position_offset);
             if (IsSaneUnitPosition(unitPos)) {
@@ -251,6 +313,9 @@ void CacheThread() {
                     if (!std::isnan(aVel.x) && aVel.Length() < 2000.0f) trueLocalVel = aVel;
                 }
             }
+
+            TryReadUnitTeam(cachedRealLocalUnit, lTeam);
+            teamConfirmed = lTeam > 0;
         }
 
         int count = mem.Read<int>(cGame + offsets::cgame::unitcount);
@@ -265,9 +330,20 @@ void CacheThread() {
             mem.ReadBuffer(unitList, ptrs.data(), count * sizeof(uintptr_t));
         }
 
+        if (!teamConfirmed) {
+            Vector3 refLocalPos = trueLocalPos;
+            {
+                std::lock_guard<std::mutex> lock(shared::DataMutex);
+                if (!IsSaneUnitPosition(refLocalPos)) refLocalPos = shared::LocalUnitPos;
+            }
+            int inferredTeam = -1;
+            if (TryResolveTeamFromPosition(ptrs, count, refLocalPos, inferredTeam)) {
+                lTeam = inferredTeam;
+                teamConfirmed = true;
+            }
+        }
+
         std::vector<CachedEntity> tempCache;
-        int lTeam = -1;
-        bool teamConfirmed = false;
 
         for (int i = 0; i < count; i++) {
             uintptr_t ptr = ptrs[i];
@@ -285,8 +361,6 @@ void CacheThread() {
             if (team == 0) continue;
 
             if (cachedRealLocalUnit != 0 && ptr == cachedRealLocalUnit) {
-                lTeam = team;
-                teamConfirmed = true;
                 if (IsSaneUnitPosition(pos)) {
                     trueLocalPos = pos;
                     lastCachedLocalPos = pos;

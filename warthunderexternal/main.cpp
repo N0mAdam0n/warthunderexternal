@@ -45,9 +45,8 @@ namespace shared {
     Matrix4x4 ViewMatrixAlt;
     Vector3 LocalPos;
     Vector3 LocalUnitPos;
-    Vector3 NativePredictionPos;
     Vector3 CCIPPos;
-    float LiveVelocity;
+    float LiveVelocity = 800.0f;
     int LocalTeam;
     std::mutex DataMutex;
     std::atomic<uintptr_t> TargetHijackPtr(0);
@@ -111,12 +110,13 @@ namespace settings {
     bool bShowFovCircle = true;
     bool bPrediction = true;
     bool bBulletDrop = true;
-    float gravityScale = 1.0f;
-    bool bUseNativePredictionAim = false;
+    float gravityScale = 0.88f;
     float targetHeightRatio = 0.5f;
 
     bool bEsp = true;
     bool bEspBots = true;
+    bool bEspTeammates = false;
+    bool bEspGround = true;
     bool bBox = true;
     bool bBox3D = false;
     bool bFilledBox = true;
@@ -155,6 +155,7 @@ namespace settings {
     std::atomic<bool> bMindControlActive(false);
 
     float col_BoxVis[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
+    float col_BoxTeam[4] = { 0.2f, 0.85f, 0.35f, 1.0f };
     float col_Fov[4] = { 1.0f, 1.0f, 1.0f, 0.5f };
 }
 
@@ -191,19 +192,37 @@ void RenderNotifications(ImDrawList* draw) {
 }
 
 void DrawWatermark(ImDrawList* draw) {
-    time_t raw; struct tm info; char buf[80]; time(&raw); localtime_s(&info, &raw); strftime(buf, sizeof(buf), "%H:%M:%S", &info);
+    // Cache time string; updating every frame is wasteful and hits CRT every tick
+    static char timeBuf[80] = "00:00:00";
+    static uint64_t lastTimeUpdate = 0;
+    const uint64_t nowTs = GetTickCount64();
+    if (nowTs - lastTimeUpdate >= 1000) {
+        time_t raw; struct tm info;
+        time(&raw); localtime_s(&info, &raw);
+        strftime(timeBuf, sizeof(timeBuf), "%H:%M:%S", &info);
+        lastTimeUpdate = nowTs;
+    }
+
     int displayTeam = -1;
+    const char* teamMode = "A";
     {
         std::lock_guard<std::mutex> lock(shared::DataMutex);
-        displayTeam = shared::LocalTeam;
+        if (settings::bAutoTeam) {
+            displayTeam = shared::LocalTeam;
+            teamMode = "A";
+        }
+        else {
+            displayTeam = settings::ManualTeam;
+            teamMode = "M";
+        }
     }
 
     char text[320];
-    _snprintf_s(text, _TRUNCATE, "JANG DMA (WT) | Draw:%u View:%u Data:%u | Ent:%u/%u | cGame:%s Team:%d | %ums | %s",
+    _snprintf_s(text, _TRUNCATE, "JANG DMA (WT) | Draw:%u View:%u Data:%u | Ent:%u/%u | cGame:%s Team:%d(%s) | %ums | %s",
         perf::drawFps.load(), perf::viewFps.load(), perf::entityFps.load(),
         shared::cachedEntityCount.load(), shared::rawUnitCount.load(),
         shared::gameLinkOk.load(std::memory_order_relaxed) ? "OK" : "NO",
-        displayTeam, perf::cacheMs.load(), buf);
+        displayTeam, teamMode, perf::cacheMs.load(), timeBuf);
     ImVec2 pos(20, 20); ImVec2 tSize = ImGui::CalcTextSize(text); ImVec2 pad(12, 6);
     ImVec2 bSize(tSize.x + pad.x * 2, tSize.y + pad.y * 2);
     draw->AddRectFilled(pos, ImVec2(pos.x + bSize.x, pos.y + bSize.y), ImColor(15, 15, 15, 200), 4.0f);
@@ -510,7 +529,16 @@ int main() {
         }
         if (GetAsyncKeyState(VK_END) & 1) break;
 
-        mem.UpdateGameWindow();
+        // Throttle expensive window/DMA sync (was every frame) to keep the UI thread responsive
+    // and prevent DMA reads from stalling the message pump / causing window freeze.
+        {
+            static uint64_t lastWinUpdate = 0;
+            const uint64_t now = GetTickCount64();
+            if (now - lastWinUpdate >= 120) {  // ~8 Hz is more than enough for position/resolution sync
+                mem.UpdateGameWindow();
+                lastWinUpdate = now;
+            }
+        }
 
         static auto lastToggle = GetTickCount64();
         if ((GetAsyncKeyState(VK_INSERT) & 1) && (GetTickCount64() - lastToggle > 200)) {
@@ -605,6 +633,11 @@ int main() {
                     ImGui::Text("ESP 窗口: %dx%d @ (%d,%d)", ScreenWidth, ScreenHeight, mem.LastRect.left, mem.LastRect.top);
                     ImGui::Text("绘制帧率: %u | 视图: %u | 数据: %u | 循环: %u | 缓存: %ums",
                         perf::drawFps.load(), perf::viewFps.load(), perf::entityFps.load(), perf::loopFps.load(), perf::cacheMs.load());
+                    ImGui::Text("弹速: %.0f m/s | 预测:%s 坠落:%s g=%.2f", 
+                        shared::LiveVelocity,
+                        settings::bPrediction ? "ON" : "OFF",
+                        settings::bBulletDrop ? "ON" : "OFF",
+                        settings::gravityScale);
                     ImGui::Text("Kmbox: %s", Input::IsReady() ? "已连接" : (settings::bUseKmbox ? "失败" : "已禁用"));
                     if (!offsets::api_version.empty()) ImGui::Text("偏移: v%s", offsets::api_version.c_str());
                 }
@@ -613,7 +646,7 @@ int main() {
                     UI::Toggle("内存自瞄", &settings::bMemoryAim);
                     if (settings::bMemoryAim) { int k = settings::aimKey; if (ImGui::Combo("按键", &k, "左键\0右键\0Alt\0Shift\0")) settings::aimKey = (k == 0 ? VK_LBUTTON : (k == 1 ? VK_RBUTTON : (k == 2 ? VK_MENU : VK_SHIFT))); UI::Slider("平滑度", &settings::aimSmooth, 1.0f, 20.0f); UI::Slider("视野范围", &settings::aimFov, 10.0f, 500.0f); UI::Toggle("显示视野圈", &settings::bShowFovCircle); }
                     ImGui::EndChild(); ImGui::NextColumn(); ImGui::BeginChild("Pred", ImVec2(0, 0), true); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "弹道预测"); ImGui::Separator();
-                    UI::Toggle("速度预测", &settings::bPrediction); UI::Toggle("子弹下坠", &settings::bBulletDrop); if (settings::bBulletDrop) UI::Slider("重力系数", &settings::gravityScale, 1.05f, 1.15f, "%.4f"); ImGui::Separator(); ImGui::EndChild(); ImGui::Columns(1);
+                    UI::Toggle("速度预测", &settings::bPrediction); UI::Toggle("子弹下坠", &settings::bBulletDrop); if (settings::bBulletDrop) UI::Slider("重力系数", &settings::gravityScale, 0.50f, 1.20f, "%.2f"); ImGui::Separator(); ImGui::EndChild(); ImGui::Columns(1);
                 }
                 else if (activeTab == 2) {
                     ImGui::Columns(2, nullptr, false); ImGui::BeginChild("Esp", ImVec2(0, 0), true); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "玩家视觉"); ImGui::Separator();
@@ -621,9 +654,17 @@ int main() {
                     if (settings::bEsp) {
                         ImGui::Indent(15.0f);
                         UI::Toggle("BOT ESP", &settings::bEspBots);
+                        UI::Toggle("队友 ESP", &settings::bEspTeammates);
+                        UI::Toggle("地面目标", &settings::bEspGround);
+                        if (settings::bEspTeammates) {
+                            ImGui::Indent(15.0f);
+                            ImGui::ColorEdit4("##TeamBoxColor", settings::col_BoxTeam, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+                            ImGui::SameLine(); ImGui::Text("队友颜色");
+                            ImGui::Unindent(15.0f);
+                        }
                         ImGui::Unindent(15.0f);
                         UI::Toggle("2D 方框", &settings::bBox);
-                        if (settings::bBox) { ImGui::Indent(15.0f); UI::Toggle("填充背景", &settings::bFilledBox); ImGui::ColorEdit4("##BoxColor", settings::col_BoxVis, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel); ImGui::SameLine(); ImGui::Text("方框颜色"); ImGui::Unindent(15.0f); }
+                        if (settings::bBox) { ImGui::Indent(15.0f); UI::Toggle("填充背景", &settings::bFilledBox); ImGui::ColorEdit4("##BoxColor", settings::col_BoxVis, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel); ImGui::SameLine(); ImGui::Text("敌方颜色"); ImGui::Unindent(15.0f); }
                         UI::Toggle("3D 方框", &settings::bBox3D); UI::Toggle("名称", &settings::bName); UI::Toggle("距离", &settings::bDistance); UI::Toggle("装填进度", &settings::bReloadBar); UI::Toggle("朝向", &settings::bFacing); UI::Toggle("连线", &settings::bLines);
 
                         UI::Toggle("坦克内部 (透视)", &settings::bInternalsESP);
@@ -752,6 +793,14 @@ int main() {
         g_pd3dDeviceContext->ClearRenderTargetView(g_mainRenderTargetView, cc);
         ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());
         g_pSwapChain->Present(0, 0);
+
+        // Light yield to keep the window responsive and reduce CPU spin / DMA mutex starvation.
+        // When menu is hidden (pure ESP) we can afford slightly lower tick rate; when menu shown keep snappier.
+        if (!bShowMenu) {
+            Sleep(1);   // ~ cap ~500-1000 fps, vastly reduces busy loop while keeping smooth visuals
+        } else {
+            Sleep(0);   // yield remainder of slice when menu open
+        }
     }
 
     ShutdownApplication();

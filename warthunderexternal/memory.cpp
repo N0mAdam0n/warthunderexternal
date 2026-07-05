@@ -238,13 +238,14 @@ bool Memory::UpdateGameWindow() {
         lastResolutionCheck = now;
     }
 
-    int targetW = GameScreenWidth > 0 ? GameScreenWidth : GetSystemMetrics(SM_CXSCREEN);
-    int targetH = GameScreenHeight > 0 ? GameScreenHeight : GetSystemMetrics(SM_CYSCREEN);
+    // Use cached game/desktop sizes; avoid calling GetSystemMetrics on every throttled update
+    int targetW = GameScreenWidth > 0 ? GameScreenWidth : ScreenWidth;
+    int targetH = GameScreenHeight > 0 ? GameScreenHeight : ScreenHeight;
     int targetX = settings::overlayX;
     int targetY = settings::overlayY;
 
-    if (targetW < 100) targetW = GetSystemMetrics(SM_CXSCREEN);
-    if (targetH < 100) targetH = GetSystemMetrics(SM_CYSCREEN);
+    if (targetW < 100) targetW = (ScreenWidth > 100 ? ScreenWidth : GetSystemMetrics(SM_CXSCREEN));
+    if (targetH < 100) targetH = (ScreenHeight > 100 ? ScreenHeight : GetSystemMetrics(SM_CYSCREEN));
 
     const int prevW = ScreenWidth;
     const int prevH = ScreenHeight;

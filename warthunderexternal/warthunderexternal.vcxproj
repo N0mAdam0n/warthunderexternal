@@ -197,7 +197,6 @@ exit /b 0</Command>
   <ItemGroup>
     <ClInclude Include="config.hpp" />
     <ClInclude Include="dma\dma_loader.hpp" />
-    <ClInclude Include="dma\vmmdll_api.hpp" />
     <ClInclude Include="imgui\imconfig.h" />
     <ClInclude Include="imgui\imgui.h" />
     <ClInclude Include="imgui\imgui_impl_dx11.h" />

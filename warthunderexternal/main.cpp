@@ -337,6 +337,172 @@ static bool EnsureOverlayDimensions() {
     return ScreenWidth >= 100 && ScreenHeight >= 100;
 }
 
+static std::string Trim(const std::string& value) {
+    size_t start = 0;
+    while (start < value.size() && std::isspace(static_cast<unsigned char>(value[start]))) start++;
+    size_t end = value.size();
+    while (end > start && std::isspace(static_cast<unsigned char>(value[end - 1]))) end--;
+    return value.substr(start, end - start);
+}
+
+static void ApplyUserConfigValue(const std::string& section, const std::string& key, const std::string& rawValue) {
+    std::string value = Trim(rawValue);
+
+    if (section == "aim") {
+        if (key == "memory_aim") settings::bMemoryAim = (value == "1" || value == "true" || value == "yes");
+        else if (key == "aim_key" && !value.empty()) settings::aimKey = std::stoi(value);
+        else if (key == "aim_fov" && !value.empty()) settings::aimFov = std::stof(value);
+        else if (key == "aim_smooth" && !value.empty()) settings::aimSmooth = std::stof(value);
+        else if (key == "show_fov_circle") settings::bShowFovCircle = (value == "1" || value == "true" || value == "yes");
+        else if (key == "prediction") settings::bPrediction = (value == "1" || value == "true" || value == "yes");
+        else if (key == "bullet_drop") settings::bBulletDrop = (value == "1" || value == "true" || value == "yes");
+        else if (key == "gravity_scale" && !value.empty()) settings::gravityScale = std::stof(value);
+        else if (key == "target_height_ratio" && !value.empty()) settings::targetHeightRatio = std::stof(value);
+    } else if (section == "esp") {
+        if (key == "esp") settings::bEsp = (value == "1" || value == "true" || value == "yes");
+        else if (key == "esp_bots") settings::bEspBots = (value == "1" || value == "true" || value == "yes");
+        else if (key == "esp_teammates") settings::bEspTeammates = (value == "1" || value == "true" || value == "yes");
+        else if (key == "esp_ground") settings::bEspGround = (value == "1" || value == "true" || value == "yes");
+        else if (key == "force_chinese_names") settings::bForceChineseNames = (value == "1" || value == "true" || value == "yes");
+        else if (key == "esp_font_index" && !value.empty()) settings::espFontIndex = std::stoi(value);
+        else if (key == "esp_font_size" && !value.empty()) settings::espFontSize = std::stof(value);
+        else if (key == "box") settings::bBox = (value == "1" || value == "true" || value == "yes");
+        else if (key == "box_3d") settings::bBox3D = (value == "1" || value == "true" || value == "yes");
+        else if (key == "filled_box") settings::bFilledBox = (value == "1" || value == "true" || value == "yes");
+        else if (key == "lines") settings::bLines = (value == "1" || value == "true" || value == "yes");
+        else if (key == "name") settings::bName = (value == "1" || value == "true" || value == "yes");
+        else if (key == "distance") settings::bDistance = (value == "1" || value == "true" || value == "yes");
+        else if (key == "reload_bar") settings::bReloadBar = (value == "1" || value == "true" || value == "yes");
+        else if (key == "facing") settings::bFacing = (value == "1" || value == "true" || value == "yes");
+        else if (key == "radar") settings::bRadar = (value == "1" || value == "true" || value == "yes");
+        else if (key == "missile_esp") settings::bMissileESP = (value == "1" || value == "true" || value == "yes");
+        else if (key == "internals_esp") settings::bInternalsESP = (value == "1" || value == "true" || value == "yes");
+        else if (key == "internals_mode" && !value.empty()) settings::iInternalsMode = std::stoi(value);
+        else if (key == "internals_name") settings::bInternalsName = (value == "1" || value == "true" || value == "yes");
+    } else if (section == "features") {
+        if (key == "ccip") settings::bCCIP = (value == "1" || value == "true" || value == "yes");
+        else if (key == "air_lead") settings::bAirLead = (value == "1" || value == "true" || value == "yes");
+        else if (key == "danger_warning") settings::bDangerWarning = (value == "1" || value == "true" || value == "yes");
+        else if (key == "enable_memory_writes") settings::bEnableMemoryWrites = (value == "1" || value == "true" || value == "yes");
+        else if (key == "enable_entity_hijack") settings::bEnableEntityHijack = (value == "1" || value == "true" || value == "yes");
+        else if (key == "force_arcade_crosshair") settings::bForceArcadeCrosshair = (value == "1" || value == "true" || value == "yes");
+        else if (key == "force_air_lead") settings::bForceAirLead = (value == "1" || value == "true" || value == "yes");
+        else if (key == "force_tank_esp") settings::bForceTankESP = (value == "1" || value == "true" || value == "yes");
+        else if (key == "force_thermals") settings::bForceThermals = (value == "1" || value == "true" || value == "yes");
+        else if (key == "mid_air_reload") settings::bMidAirReload = (value == "1" || value == "true" || value == "yes");
+        else if (key == "ghost_collision") settings::bGhostCollision = (value == "1" || value == "true" || value == "yes");
+        else if (key == "spam_scout") settings::bSpamScout = (value == "1" || value == "true" || value == "yes");
+        else if (key == "thrust_mult") settings::bThrustMult = (value == "1" || value == "true" || value == "yes");
+    } else if (section == "general") {
+        if (key == "auto_team") settings::bAutoTeam = (value == "1" || value == "true" || value == "yes");
+        else if (key == "manual_team" && !value.empty()) settings::ManualTeam = std::stoi(value);
+        else if (key == "streamer_mode") settings::bStreamerMode = (value == "1" || value == "true" || value == "yes");
+    } else if (section == "colors") {
+        auto parseColor = [](const std::string& v, float* col) {
+            std::istringstream iss(v);
+            std::string token;
+            int i = 0;
+            while (std::getline(iss, token, ',') && i < 4) {
+                col[i++] = std::stof(Trim(token));
+            }
+        };
+        if (key == "col_box_vis") parseColor(value, settings::col_BoxVis);
+        else if (key == "col_box_team") parseColor(value, settings::col_BoxTeam);
+        else if (key == "col_fov") parseColor(value, settings::col_Fov);
+    }
+}
+
+bool LoadUserSettings(const char* path = "settings.ini") {
+    std::ifstream file(path);
+    if (!file.good()) return false;
+
+    std::string line;
+    std::string section;
+    while (std::getline(file, line)) {
+        line = Trim(line);
+        if (line.empty() || line[0] == '#' || line[0] == ';') continue;
+
+        if (line.front() == '[' && line.back() == ']') {
+            section = line.substr(1, line.size() - 2);
+            continue;
+        }
+
+        size_t eq = line.find('=');
+        if (eq == std::string::npos) continue;
+
+        std::string key = Trim(line.substr(0, eq));
+        std::string value = Trim(line.substr(eq + 1));
+        ApplyUserConfigValue(section, key, value);
+    }
+
+    return true;
+}
+
+void SaveUserSettings(const char* path = "settings.ini") {
+    std::ofstream f(path);
+    if (!f.good()) return;
+
+    f << "# JANG WT DMA - User settings (auto-saved on exit)\n\n";
+
+    f << "[aim]\n";
+    f << "memory_aim=" << (settings::bMemoryAim ? 1 : 0) << "\n";
+    f << "aim_key=" << settings::aimKey << "\n";
+    f << "aim_fov=" << settings::aimFov << "\n";
+    f << "aim_smooth=" << settings::aimSmooth << "\n";
+    f << "show_fov_circle=" << (settings::bShowFovCircle ? 1 : 0) << "\n";
+    f << "prediction=" << (settings::bPrediction ? 1 : 0) << "\n";
+    f << "bullet_drop=" << (settings::bBulletDrop ? 1 : 0) << "\n";
+    f << "gravity_scale=" << settings::gravityScale << "\n";
+    f << "target_height_ratio=" << settings::targetHeightRatio << "\n\n";
+
+    f << "[esp]\n";
+    f << "esp=" << (settings::bEsp ? 1 : 0) << "\n";
+    f << "esp_bots=" << (settings::bEspBots ? 1 : 0) << "\n";
+    f << "esp_teammates=" << (settings::bEspTeammates ? 1 : 0) << "\n";
+    f << "esp_ground=" << (settings::bEspGround ? 1 : 0) << "\n";
+    f << "force_chinese_names=" << (settings::bForceChineseNames ? 1 : 0) << "\n";
+    f << "esp_font_index=" << settings::espFontIndex << "\n";
+    f << "esp_font_size=" << settings::espFontSize << "\n";
+    f << "box=" << (settings::bBox ? 1 : 0) << "\n";
+    f << "box_3d=" << (settings::bBox3D ? 1 : 0) << "\n";
+    f << "filled_box=" << (settings::bFilledBox ? 1 : 0) << "\n";
+    f << "lines=" << (settings::bLines ? 1 : 0) << "\n";
+    f << "name=" << (settings::bName ? 1 : 0) << "\n";
+    f << "distance=" << (settings::bDistance ? 1 : 0) << "\n";
+    f << "reload_bar=" << (settings::bReloadBar ? 1 : 0) << "\n";
+    f << "facing=" << (settings::bFacing ? 1 : 0) << "\n";
+    f << "radar=" << (settings::bRadar ? 1 : 0) << "\n";
+    f << "missile_esp=" << (settings::bMissileESP ? 1 : 0) << "\n";
+    f << "internals_esp=" << (settings::bInternalsESP ? 1 : 0) << "\n";
+    f << "internals_mode=" << settings::iInternalsMode << "\n";
+    f << "internals_name=" << (settings::bInternalsName ? 1 : 0) << "\n\n";
+
+    f << "[features]\n";
+    f << "ccip=" << (settings::bCCIP ? 1 : 0) << "\n";
+    f << "air_lead=" << (settings::bAirLead ? 1 : 0) << "\n";
+    f << "danger_warning=" << (settings::bDangerWarning ? 1 : 0) << "\n";
+    f << "enable_memory_writes=" << (settings::bEnableMemoryWrites ? 1 : 0) << "\n";
+    f << "enable_entity_hijack=" << (settings::bEnableEntityHijack ? 1 : 0) << "\n";
+    f << "force_arcade_crosshair=" << (settings::bForceArcadeCrosshair ? 1 : 0) << "\n";
+    f << "force_air_lead=" << (settings::bForceAirLead ? 1 : 0) << "\n";
+    f << "force_tank_esp=" << (settings::bForceTankESP ? 1 : 0) << "\n";
+    f << "force_thermals=" << (settings::bForceThermals ? 1 : 0) << "\n";
+    f << "mid_air_reload=" << (settings::bMidAirReload ? 1 : 0) << "\n";
+    f << "ghost_collision=" << (settings::bGhostCollision ? 1 : 0) << "\n";
+    f << "spam_scout=" << (settings::bSpamScout ? 1 : 0) << "\n";
+    f << "thrust_mult=" << (settings::bThrustMult ? 1 : 0) << "\n\n";
+
+    f << "[general]\n";
+    f << "auto_team=" << (settings::bAutoTeam ? 1 : 0) << "\n";
+    f << "manual_team=" << settings::ManualTeam << "\n";
+    f << "streamer_mode=" << (settings::bStreamerMode ? 1 : 0) << "\n\n";
+
+    f << "[colors]\n";
+    f << "col_box_vis=" << settings::col_BoxVis[0] << "," << settings::col_BoxVis[1] << "," << settings::col_BoxVis[2] << "," << settings::col_BoxVis[3] << "\n";
+    f << "col_box_team=" << settings::col_BoxTeam[0] << "," << settings::col_BoxTeam[1] << "," << settings::col_BoxTeam[2] << "," << settings::col_BoxTeam[3] << "\n";
+    f << "col_fov=" << settings::col_Fov[0] << "," << settings::col_Fov[1] << "," << settings::col_Fov[2] << "," << settings::col_Fov[3] << "\n";
+}
+
 static void SetWorkingDirectoryToExe() {
     wchar_t modulePath[MAX_PATH]{};
     if (!GetModuleFileNameW(nullptr, modulePath, MAX_PATH)) return;
@@ -371,6 +537,9 @@ static bool AcquireSingleInstance() {
 static void ShutdownApplication() {
     static std::atomic<bool> shutdownOnce{ false };
     if (shutdownOnce.exchange(true)) return;
+
+    SaveUserSettings();
+    std::cout << " [+] Saved settings.ini" << std::endl;
 
     app::running.store(false, std::memory_order_relaxed);
     Sleep(500);
@@ -500,6 +669,13 @@ int main() {
     }
     else {
         std::cout << "[!] dma_config.ini not found, using defaults." << std::endl;
+    }
+
+    if (LoadUserSettings()) {
+        std::cout << " [+] Loaded settings.ini" << std::endl;
+    }
+    else {
+        std::cout << "[!] settings.ini not found, using defaults." << std::endl;
     }
 
     std::cout << "[>] Connecting to DMA device..." << std::endl;

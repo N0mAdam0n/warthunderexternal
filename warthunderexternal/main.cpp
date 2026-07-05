@@ -121,6 +121,7 @@ namespace settings {
     bool bForceChineseNames = false;
     int espFontIndex = 0;
     float espFontSize = 18.0f;
+    int espMarkerStyle = 0;  // 0: small dot, 1: solid circle, 2: hollow circle, 3: diamond, 4: square
     bool bBox = true;
     bool bBox3D = false;
     bool bFilledBox = true;
@@ -369,6 +370,7 @@ static void ApplyUserConfigValue(const std::string& section, const std::string& 
         else if (key == "force_chinese_names") settings::bForceChineseNames = (value == "1" || value == "true" || value == "yes");
         else if (key == "esp_font_index" && !value.empty()) settings::espFontIndex = std::stoi(value);
         else if (key == "esp_font_size" && !value.empty()) settings::espFontSize = std::stof(value);
+        else if (key == "esp_marker_style" && !value.empty()) settings::espMarkerStyle = std::stoi(value);
         else if (key == "box") settings::bBox = (value == "1" || value == "true" || value == "yes");
         else if (key == "box_3d") settings::bBox3D = (value == "1" || value == "true" || value == "yes");
         else if (key == "filled_box") settings::bFilledBox = (value == "1" || value == "true" || value == "yes");
@@ -467,6 +469,7 @@ void SaveUserSettings(const char* path = "settings.ini") {
     f << "force_chinese_names=" << (settings::bForceChineseNames ? 1 : 0) << "\n";
     f << "esp_font_index=" << settings::espFontIndex << "\n";
     f << "esp_font_size=" << settings::espFontSize << "\n";
+    f << "esp_marker_style=" << settings::espMarkerStyle << "\n";
     f << "box=" << (settings::bBox ? 1 : 0) << "\n";
     f << "box_3d=" << (settings::bBox3D ? 1 : 0) << "\n";
     f << "filled_box=" << (settings::bFilledBox ? 1 : 0) << "\n";
@@ -945,6 +948,8 @@ int main() {
                         UI::Slider("字号", &settings::espFontSize, 10.0f, 36.0f, "%.0f");
                         ImGui::ColorEdit4("##ESPTextColor", settings::col_ESPText, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
                         ImGui::SameLine(); ImGui::Text("文字颜色");
+
+                        ImGui::Combo("位置标记样式", &settings::espMarkerStyle, "小点\0实心圆\0空心圆\0菱形\0小方块\0", 5);
 
                         ImGui::Unindent(15.0f);
                     }

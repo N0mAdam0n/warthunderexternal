@@ -457,10 +457,8 @@ void RenderESP(ImDrawList* draw) {
         if (ProjectToScreen(lead.aimPoint, ps, vm, vmAlt)) {
             const bool predictionActive = settings::bPrediction || settings::bBulletDrop || settings::bAirLead;
 
-            // Draw ballistic prediction marker. Decoupled from full ESP so "弹道预测" in 战斗 tab is visible
-            // even if ESP 总开关 is off. This makes the feature demonstrably work.
             if (predictionActive) {
-                // Draw a distinct prediction/lead point + optional lead line from current pos
+                // Draw ballistic prediction/lead marker (only when prediction enabled)
                 ImVec2 curScreen;
                 if (ProjectToScreen(drawEnt.position, curScreen, vm, vmAlt)) {
                     draw->AddLine(curScreen, ps, ImColor(255, 220, 50, 160), 1.0f);
@@ -473,13 +471,33 @@ void RenderESP(ImDrawList* draw) {
                     draw->AddCircleFilled(ps, 2.0f, ImColor(255, 255, 80, 255));
                 }
             } else if (settings::bEsp) {
-                // Original behavior when only ESP (no explicit prediction) is on
-                if (ent.isAir) {
-                    draw->AddCircle(ps, 8.0f, ImColor(219, 44, 44, 255), 12, 2.0f);
-                    draw->AddCircleFilled(ps, 2.0f, ImColor(219, 44, 44, 255));
-                }
-                else {
-                    draw->AddCircleFilled(ps, 3.0f, ImColor(255, 255, 0));
+                // Simple position marker dot when ballistic prediction is OFF
+                ImU32 dotCol = ImGui::ColorConvertFloat4ToU32(ImVec4(settings::col_ESPText[0], settings::col_ESPText[1], settings::col_ESPText[2], settings::col_ESPText[3]));
+                switch (settings::espMarkerStyle) {
+                    case 0: // small dot
+                        draw->AddCircleFilled(ps, 2.0f, dotCol);
+                        break;
+                    case 1: // solid circle
+                        draw->AddCircleFilled(ps, 5.0f, dotCol);
+                        break;
+                    case 2: // hollow circle
+                        draw->AddCircle(ps, 5.0f, dotCol, 12, 1.5f);
+                        break;
+                    case 3: // diamond
+                        draw->AddQuadFilled(
+                            ImVec2(ps.x, ps.y - 4),
+                            ImVec2(ps.x + 4, ps.y),
+                            ImVec2(ps.x, ps.y + 4),
+                            ImVec2(ps.x - 4, ps.y),
+                            dotCol
+                        );
+                        break;
+                    case 4: // small square
+                        draw->AddRectFilled(ImVec2(ps.x - 3, ps.y - 3), ImVec2(ps.x + 3, ps.y + 3), dotCol);
+                        break;
+                    default:
+                        draw->AddCircleFilled(ps, 2.0f, dotCol);
+                        break;
                 }
             }
 

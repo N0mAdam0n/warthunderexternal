@@ -107,9 +107,9 @@ namespace settings {
     int aimKey = VK_RBUTTON;
     float aimFov = 150.0f;
     float aimSmooth = 4.0f;
-    bool bShowFovCircle = true;
-    bool bPrediction = true;
-    bool bBulletDrop = true;
+    bool bShowFovCircle = true;  // now exposed as standalone toggle in 视觉 and 战斗 tabs
+    bool bPrediction = false;
+    bool bBulletDrop = false;
     float gravityScale = 0.88f;
     float targetHeightRatio = 0.5f;
 
@@ -644,7 +644,8 @@ int main() {
                 else if (activeTab == 1) {
                     ImGui::Columns(2, nullptr, false); ImGui::BeginChild("Aim", ImVec2(0, 0), true); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "瞄准辅助"); ImGui::Separator();
                     UI::Toggle("内存自瞄", &settings::bMemoryAim);
-                    if (settings::bMemoryAim) { int k = settings::aimKey; if (ImGui::Combo("按键", &k, "左键\0右键\0Alt\0Shift\0")) settings::aimKey = (k == 0 ? VK_LBUTTON : (k == 1 ? VK_RBUTTON : (k == 2 ? VK_MENU : VK_SHIFT))); UI::Slider("平滑度", &settings::aimSmooth, 1.0f, 20.0f); UI::Slider("视野范围", &settings::aimFov, 10.0f, 500.0f); UI::Toggle("显示视野圈", &settings::bShowFovCircle); }
+                    UI::Toggle("显示视野圈", &settings::bShowFovCircle);
+                    if (settings::bMemoryAim) { int k = settings::aimKey; if (ImGui::Combo("按键", &k, "左键\0右键\0Alt\0Shift\0")) settings::aimKey = (k == 0 ? VK_LBUTTON : (k == 1 ? VK_RBUTTON : (k == 2 ? VK_MENU : VK_SHIFT))); UI::Slider("平滑度", &settings::aimSmooth, 1.0f, 20.0f); UI::Slider("视野范围", &settings::aimFov, 10.0f, 500.0f); }
                     ImGui::EndChild(); ImGui::NextColumn(); ImGui::BeginChild("Pred", ImVec2(0, 0), true); ImGui::TextColored(ImVec4(0.86f, 0.17f, 0.17f, 1.f), "弹道预测"); ImGui::Separator();
                     UI::Toggle("速度预测", &settings::bPrediction); UI::Toggle("子弹下坠", &settings::bBulletDrop); if (settings::bBulletDrop) UI::Slider("重力系数", &settings::gravityScale, 0.50f, 1.20f, "%.2f"); ImGui::Separator(); ImGui::EndChild(); ImGui::Columns(1);
                 }
@@ -666,6 +667,7 @@ int main() {
                         UI::Toggle("2D 方框", &settings::bBox);
                         if (settings::bBox) { ImGui::Indent(15.0f); UI::Toggle("填充背景", &settings::bFilledBox); ImGui::ColorEdit4("##BoxColor", settings::col_BoxVis, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel); ImGui::SameLine(); ImGui::Text("敌方颜色"); ImGui::Unindent(15.0f); }
                         UI::Toggle("3D 方框", &settings::bBox3D); UI::Toggle("名称", &settings::bName); UI::Toggle("距离", &settings::bDistance); UI::Toggle("装填进度", &settings::bReloadBar); UI::Toggle("朝向", &settings::bFacing); UI::Toggle("连线", &settings::bLines);
+                        UI::Toggle("显示视野圈", &settings::bShowFovCircle);
 
                         UI::Toggle("坦克内部 (透视)", &settings::bInternalsESP);
                         if (settings::bInternalsESP) {

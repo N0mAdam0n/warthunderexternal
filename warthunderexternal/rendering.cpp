@@ -169,15 +169,42 @@ void RenderESP(ImDrawList* draw) {
     std::vector<CachedRocket> localRockets;
     Matrix4x4 vm, vmAlt; Vector3 lPos, localUnitPos, ccip; float bVel; int lTeam;
 
+    // Only copy heavy entity data when there's actually new data (avoids long lock hold every frame).
+    // This prevents CacheThread from blocking on DataMutex during slow copies, and keeps perf counters (including cacheMs) updating.
+    // Previously, copy happened unconditionally every render frame -> long critical section -> CacheThread stalled -> everything "卡".
     {
+        static uint64_t lastEntityGen = 0;
+        uint64_t curGen = shared::entityGeneration.load(std::memory_order_relaxed);
+        if (curGen != lastEntityGen) {
+            std::lock_guard<std::mutex> lock(shared::DataMutex);
+            const auto& src = shared::Entities;
+            size_t n = std::min<size_t>(src.size(), 64);
+            localEntities.assign(src.begin(), src.begin() + n);
+            const auto& rsrc = shared::Rockets;
+            localRockets.assign(rsrc.begin(), rsrc.begin() + std::min<size_t>(rsrc.size(), 32));
+            lastEntityGen = curGen;
+        } else if (localEntities.empty() && !shared::Entities.empty()) {
+            std::lock_guard<std::mutex> lock(shared::DataMutex);
+            const auto& src = shared::Entities;
+            size_t n = std::min<size_t>(src.size(), 64);
+            localEntities.assign(src.begin(), src.begin() + n);
+        }
+    }
+
+    {
+        // View data updates more frequently, copy every time or on its gen.
         std::lock_guard<std::mutex> lock(shared::DataMutex);
-        localEntities = shared::Entities;
-        localRockets = shared::Rockets; // Get synced missiles
         vm = shared::ViewMatrix;
         vmAlt = shared::ViewMatrixAlt;
         lPos = shared::LocalPos;
         localUnitPos = shared::LocalUnitPos;
         ccip = shared::CCIPPos; bVel = shared::LiveVelocity; lTeam = shared::LocalTeam;
+    }
+
+    // Performance safeguard: cap entities to prevent occasional freezes/stutters when many units or heavy options (internals) enabled.
+    // This was a common cause of "绘制卡死" under load. Copy only happens on new data now.
+    if (localEntities.size() > 64) {
+        localEntities.resize(64);
     }
 
     const bool hasLocalUnit = IsSaneUnitPosition(localUnitPos);
@@ -316,7 +343,9 @@ void RenderESP(ImDrawList* draw) {
         }
 
         if (settings::bEsp) {
-            if (settings::bInternalsESP && !ent.internals.empty()) {
+            if (settings::bInternalsESP && !ent.internals.empty() && distMeters < 250.0f) {  // only close for performance, avoid occasional卡死 on complex models or many ents
+
+
                 for (const auto& part : ent.internals) {
                     ImU32 partCol = ImColor(255, 255, 255, 240);
                     std::string n = part.name;

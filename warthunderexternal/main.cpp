@@ -812,7 +812,9 @@ int main() {
         // Dynamic font reload for ESP text (compatibility options + size)
         static int lastFontIdx = -1;
         static float lastFontSz = -1.0f;
-        if (settings::espFontIndex != lastFontIdx || settings::espFontSize != lastFontSz || g_fontReloadNeeded) {
+        if (settings::espFontIndex != lastFontIdx ||
+            std::abs(settings::espFontSize - lastFontSz) > 0.01f ||
+            g_fontReloadNeeded) {
             LoadESPFont();
             lastFontIdx = settings::espFontIndex;
             lastFontSz = settings::espFontSize;

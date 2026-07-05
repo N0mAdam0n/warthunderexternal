@@ -7,6 +7,7 @@
 #include <mutex>
 #include <atomic>
 #include <chrono>
+#include <unordered_map>
 
 extern Memory mem;
 
@@ -250,6 +251,9 @@ void FastViewThread() {
 void CacheThread() {
     static uintptr_t cachedRealLocalUnit = 0;
     static bool restoreControlPending = false;
+    static std::unordered_map<uintptr_t, std::string> s_nameCache;
+    static std::unordered_map<uintptr_t, Vector3> s_velCache;
+    static int s_internalsUpdateCounter = 0;
 
     while (app::running.load(std::memory_order_relaxed)) {
         const auto iterationStart = std::chrono::steady_clock::now();
@@ -376,47 +380,53 @@ void CacheThread() {
 
             uintptr_t infoPtr = mem.Read<uintptr_t>(ptr + offsets::unit::info_offset);
             if (mem.IsValidPtr(infoPtr)) {
-                uintptr_t namePtr = 0;
-                std::string candidate;
+                auto it = s_nameCache.find(ptr);
+                if (it != s_nameCache.end()) {
+                    ent.name = it->second;
+                } else {
+                    uintptr_t namePtr = 0;
+                    std::string candidate;
 
-                // Prefer ShortName for Chinese/localized names
-                bool useShort = (offsets::wtinfo::ShortName != 0);
-                if (useShort) {
-                    namePtr = mem.Read<uintptr_t>(infoPtr + offsets::wtinfo::ShortName);
-                    if (mem.IsValidPtr(namePtr)) {
-                        candidate = mem.ReadString(namePtr, 64);
+                    // Prefer ShortName for Chinese/localized names
+                    bool useShort = (offsets::wtinfo::ShortName != 0);
+                    if (useShort) {
+                        namePtr = mem.Read<uintptr_t>(infoPtr + offsets::wtinfo::ShortName);
+                        if (mem.IsValidPtr(namePtr)) {
+                            candidate = mem.ReadString(namePtr, 64);
+                        }
                     }
-                }
 
-                // When not forcing Chinese, fallback to FullName if candidate has no Chinese chars
-                auto hasChinese = [](const std::string& s) {
-                    for (unsigned char c : s) if (c > 127) return true;
-                    return false;
-                };
+                    // When not forcing Chinese, fallback to FullName if candidate has no Chinese chars
+                    auto hasChinese = [](const std::string& s) {
+                        for (unsigned char c : s) if (c > 127) return true;
+                        return false;
+                    };
 
-                if (!settings::bForceChineseNames) {
-                    if (!hasChinese(candidate) || candidate.empty()) {
+                    if (!settings::bForceChineseNames) {
+                        if (!hasChinese(candidate) || candidate.empty()) {
+                            namePtr = mem.Read<uintptr_t>(infoPtr + offsets::wtinfo::FullName);
+                            if (mem.IsValidPtr(namePtr)) {
+                                candidate = mem.ReadString(namePtr, 64);
+                            }
+                        }
+                    } else if (candidate.empty() && useShort) {
+                        // Force mode: if ShortName was invalid, still try FullName as last resort
                         namePtr = mem.Read<uintptr_t>(infoPtr + offsets::wtinfo::FullName);
                         if (mem.IsValidPtr(namePtr)) {
                             candidate = mem.ReadString(namePtr, 64);
                         }
                     }
-                } else if (candidate.empty() && useShort) {
-                    // Force mode: if ShortName was invalid, still try FullName as last resort
-                    namePtr = mem.Read<uintptr_t>(infoPtr + offsets::wtinfo::FullName);
-                    if (mem.IsValidPtr(namePtr)) {
-                        candidate = mem.ReadString(namePtr, 64);
-                    }
-                }
 
-                if (!candidate.empty()) {
-                    std::string raw = candidate;
-                    size_t slash = raw.find_last_of("/\\");
-                    if (slash != std::string::npos) raw = raw.substr(slash + 1);
-                    size_t ext = raw.find('.');
-                    if (ext != std::string::npos) raw = raw.substr(0, ext);
-                    std::replace(raw.begin(), raw.end(), '_', ' ');
-                    ent.name = raw;
+                    if (!candidate.empty()) {
+                        std::string raw = candidate;
+                        size_t slash = raw.find_last_of("/\\");
+                        if (slash != std::string::npos) raw = raw.substr(slash + 1);
+                        size_t ext = raw.find('.');
+                        if (ext != std::string::npos) raw = raw.substr(0, ext);
+                        std::replace(raw.begin(), raw.end(), '_', ' ');
+                        ent.name = raw;
+                        s_nameCache[ptr] = raw;
+                    }
                 }
             }
 
@@ -433,6 +443,13 @@ void CacheThread() {
                 }
             }
 
+            // Smooth velocity to reduce snap/jitter when cache updates (helps high speed without stutter)
+            auto itv = s_velCache.find(ptr);
+            if (itv != s_velCache.end() && itv->second.Length() > 0.1f) {
+                ent.velocity = ent.velocity * 0.7f + itv->second * 0.3f;
+            }
+            s_velCache[ptr] = ent.velocity;
+
             ent.rotation = mem.Read<Matrix3x3>(ptr + offsets::unit::rotation_matrix);
             ent.bbMin = mem.Read<Vector3>(ptr + offsets::unit::bbmin_offset);
             ent.bbMax = mem.Read<Vector3>(ptr + offsets::unit::bbmax_offset);
@@ -440,7 +457,10 @@ void CacheThread() {
             ent.isBot = IsUnitBot(ptr, infoPtr);
             ent.isValid = true;
 
-            if (settings::bInternalsESP && !ent.isAir) {
+            s_internalsUpdateCounter = (s_internalsUpdateCounter + 1) % 4;  // update internals even less often to keep iteration time low
+            bool doInternals = (s_internalsUpdateCounter == 0);
+
+            if (settings::bInternalsESP && !ent.isAir && doInternals) {
                 uintptr_t dm_base = mem.Read<uintptr_t>(ptr + offsets::damage_model::ptrs[0]);
                 dm_base = mem.Read<uintptr_t>(dm_base + offsets::damage_model::ptrs[1]);
 
@@ -643,6 +663,7 @@ void CacheThread() {
         );
 
         // Adaptive sleep: target ~5ms loop for good real-time without overloading DMA
+        // When heavy, still sleep at least 1ms to avoid 100% CPU and DMA overload spikes
         auto now = std::chrono::steady_clock::now();
         auto taken = std::chrono::duration_cast<std::chrono::milliseconds>(now - iterationStart).count();
         int target = 5;
@@ -650,7 +671,7 @@ void CacheThread() {
         if (sleep_ms > 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(sleep_ms));
         } else {
-            std::this_thread::yield();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
     }
 }

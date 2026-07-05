@@ -160,4 +160,5 @@ namespace settings {
     extern float col_BoxVis[4];
     extern float col_BoxTeam[4];
     extern float col_Fov[4];
+    extern float col_ESPText[4];
 }

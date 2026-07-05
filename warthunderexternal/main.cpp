@@ -161,6 +161,7 @@ namespace settings {
     float col_BoxVis[4] = { 1.0f, 0.0f, 0.0f, 1.0f };
     float col_BoxTeam[4] = { 0.2f, 0.85f, 0.35f, 1.0f };
     float col_Fov[4] = { 1.0f, 1.0f, 1.0f, 0.5f };
+    float col_ESPText[4] = { 1.0f, 1.0f, 1.0f, 1.0f };
 }
 
 extern void CacheThread();
@@ -188,7 +189,8 @@ void RenderNotifications(ImDrawList* draw) {
             ImVec2 pos = ImVec2((float)ScreenWidth / 2.0f - boxSize.x / 2.0f, startY);
             draw->AddRectFilled(pos, ImVec2(pos.x + boxSize.x, pos.y + boxSize.y), ImColor(17, 17, 21, (int)(255 * it->alpha)), 6.0f);
             draw->AddRectFilled(ImVec2(pos.x, pos.y + boxSize.y - 2), ImVec2(pos.x + boxSize.x, pos.y + boxSize.y), ImColor(219, 44, 44, (int)(255 * it->alpha)), 6.0f, ImDrawFlags_RoundCornersBottom);
-            draw->AddText(ImVec2(pos.x + padding.x, pos.y + padding.y), ImColor(255, 255, 255, (int)(255 * it->alpha)), it->message.c_str());
+            ImU32 notifCol = ImGui::ColorConvertFloat4ToU32(ImVec4(settings::col_ESPText[0], settings::col_ESPText[1], settings::col_ESPText[2], (float)(it->alpha * settings::col_ESPText[3])));
+            draw->AddText(ImVec2(pos.x + padding.x, pos.y + padding.y), notifCol, it->message.c_str());
             startY -= (boxSize.y + 10.0f);
         }
         if (it->timer <= 0.0f) it = g_Notifications.erase(it); else ++it;
@@ -231,7 +233,8 @@ void DrawWatermark(ImDrawList* draw) {
     ImVec2 bSize(tSize.x + pad.x * 2, tSize.y + pad.y * 2);
     draw->AddRectFilled(pos, ImVec2(pos.x + bSize.x, pos.y + bSize.y), ImColor(15, 15, 15, 200), 4.0f);
     draw->AddRectFilled(pos, ImVec2(pos.x + bSize.x, pos.y + 2), ImColor(219, 44, 44, 255), 4.0f, ImDrawFlags_RoundCornersTop);
-    draw->AddText(ImVec2(pos.x + pad.x, pos.y + pad.y), ImColor(255, 255, 255), text);
+    ImU32 wmCol = ImGui::ColorConvertFloat4ToU32(ImVec4(settings::col_ESPText[0], settings::col_ESPText[1], settings::col_ESPText[2], settings::col_ESPText[3]));
+    draw->AddText(ImVec2(pos.x + pad.x, pos.y + pad.y), wmCol, text);
 }
 
 ID3D11Device* g_pd3dDevice = nullptr;
@@ -409,6 +412,7 @@ static void ApplyUserConfigValue(const std::string& section, const std::string& 
         if (key == "col_box_vis") parseColor(value, settings::col_BoxVis);
         else if (key == "col_box_team") parseColor(value, settings::col_BoxTeam);
         else if (key == "col_fov") parseColor(value, settings::col_Fov);
+        else if (key == "col_esp_text") parseColor(value, settings::col_ESPText);
     }
 }
 
@@ -501,6 +505,7 @@ void SaveUserSettings(const char* path = "settings.ini") {
     f << "col_box_vis=" << settings::col_BoxVis[0] << "," << settings::col_BoxVis[1] << "," << settings::col_BoxVis[2] << "," << settings::col_BoxVis[3] << "\n";
     f << "col_box_team=" << settings::col_BoxTeam[0] << "," << settings::col_BoxTeam[1] << "," << settings::col_BoxTeam[2] << "," << settings::col_BoxTeam[3] << "\n";
     f << "col_fov=" << settings::col_Fov[0] << "," << settings::col_Fov[1] << "," << settings::col_Fov[2] << "," << settings::col_Fov[3] << "\n";
+    f << "col_esp_text=" << settings::col_ESPText[0] << "," << settings::col_ESPText[1] << "," << settings::col_ESPText[2] << "," << settings::col_ESPText[3] << "\n";
 }
 
 static void SetWorkingDirectoryToExe() {
@@ -938,6 +943,8 @@ int main() {
                         };
                         ImGui::Combo("字体", &settings::espFontIndex, fontNames, IM_ARRAYSIZE(fontNames));
                         UI::Slider("字号", &settings::espFontSize, 10.0f, 36.0f, "%.0f");
+                        ImGui::ColorEdit4("##ESPTextColor", settings::col_ESPText, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+                        ImGui::SameLine(); ImGui::Text("文字颜色");
 
                         ImGui::Unindent(15.0f);
                     }

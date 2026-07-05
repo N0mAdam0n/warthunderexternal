@@ -190,7 +190,8 @@ void RenderESP(ImDrawList* draw) {
                 );
 
                 const std::string rText = r.name + "[" + std::to_string(static_cast<int>(r.distanceToLocal / 1000.0f)) + "km]";
-                draw->AddText(ImVec2(sPos.x + 10, sPos.y - 8), ImColor(255, 100, 100), rText.c_str());
+                ImU32 missileCol = ImGui::ColorConvertFloat4ToU32(ImVec4(settings::col_ESPText[0], settings::col_ESPText[1], settings::col_ESPText[2], settings::col_ESPText[3]));
+                draw->AddText(ImVec2(sPos.x + 10, sPos.y - 8), missileCol, rText.c_str());
 
                 if (r.isThreat) {
                     char warn[96];
@@ -211,7 +212,8 @@ void RenderESP(ImDrawList* draw) {
         ImVec2 screenCCIP;
         if (WorldToScreen(ccip, screenCCIP, vm)) {
             draw->AddCircle(screenCCIP, 6.0f, ImColor(255, 50, 50, 255), 12, 2.0f);
-            draw->AddText(ImVec2(screenCCIP.x + 8, screenCCIP.y - 8), ImColor(255, 50, 50, 255), "CCIP");
+            ImU32 ccipCol = ImGui::ColorConvertFloat4ToU32(ImVec4(settings::col_ESPText[0], settings::col_ESPText[1], settings::col_ESPText[2], settings::col_ESPText[3]));
+            draw->AddText(ImVec2(screenCCIP.x + 8, screenCCIP.y - 8), ccipCol, "CCIP");
         }
     }
 
@@ -421,9 +423,13 @@ void RenderESP(ImDrawList* draw) {
                 }
                 const ImVec2 textSize = ImGui::CalcTextSize(dbuf);
                 const float textX = ((mix + max) * 0.5f) - (textSize.x * 0.5f);
-                draw->AddText(ImVec2(textX, may + 2.0f), ImColor(255, 255, 255), dbuf);
+                ImU32 distCol = ImGui::ColorConvertFloat4ToU32(ImVec4(settings::col_ESPText[0], settings::col_ESPText[1], settings::col_ESPText[2], settings::col_ESPText[3]));
+                draw->AddText(ImVec2(textX, may + 2.0f), distCol, dbuf);
             }
-            if (settings::bName) draw->AddText(ImVec2(mix, miy - 15), ImColor(200, 200, 200), ent.name.c_str());
+            if (settings::bName) {
+                ImU32 nameCol = ImGui::ColorConvertFloat4ToU32(ImVec4(settings::col_ESPText[0], settings::col_ESPText[1], settings::col_ESPText[2], settings::col_ESPText[3]));
+                draw->AddText(ImVec2(mix, miy - 15), nameCol, ent.name.c_str());
+            }
 
             if (settings::bReloadBar && !ent.isAir && ent.reloadProgress > 0.01f && ent.reloadProgress < 1.0f) {
                 float w = max - mix;
